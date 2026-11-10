@@ -43,7 +43,7 @@ docker compose up -d --wait
 docker compose down
 ```
 
-`compose.yaml` starts Postgres and a single-node Kafka (KRaft) on the standard ports, for an application running on the host. Override the host ports with `POSTGRES_PORT` and `KAFKA_PORT`, and the database credentials with `DB_USERNAME` and `DB_PASSWORD`, in the shell or a git-ignored `.env` file. If you change a port, set `DB_URL` or `KAFKA_BOOTSTRAP_SERVERS` to match. Use `docker compose down -v` to drop the database volume too.
+`compose.yaml` starts Postgres and a single-node Kafka (KRaft) on the standard ports, for an application running on the host. Kafka needs host port 9092 free: the broker advertises `localhost:9092`, so remapping the port would give clients an address they cannot reach. Override the Postgres host port with `POSTGRES_PORT` and the database credentials with `DB_USERNAME` and `DB_PASSWORD`, in the shell or a git-ignored `.env` file. If you change the Postgres port, set `DB_URL` to match. Use `docker compose down -v` to drop the database volume too.
 
 ## Known problems
 

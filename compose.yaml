@@ -1,11 +1,11 @@
 # Local development stack: Postgres and Kafka for the application running on the host.
 # Usage: docker compose up -d --wait
-# Overrides: put values in a git-ignored .env file or export them.
+# Overrides: put values in a git-ignored .env file or export them. Kafka always uses host port 9092.
 services:
   kafka:
     image: apache/kafka:3.8.0
     ports:
-      - "${KAFKA_PORT:-9092}:9092"
+      - "9092:9092"
     healthcheck:
       test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
       interval: 5s
