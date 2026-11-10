@@ -7,12 +7,15 @@ import jakarta.persistence.EntityManagerFactory;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.streams.StreamsConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationContext;
+import org.springframework.kafka.annotation.KafkaStreamsDefaultConfiguration;
+import org.springframework.kafka.config.KafkaStreamsConfiguration;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -65,6 +68,14 @@ class VideoStreamApplicationTests {
     void jdbcSettingsComeFromConfiguration() {
         assertThat(dataSource).isInstanceOf(HikariDataSource.class);
         assertThat(((HikariDataSource) dataSource).getJdbcUrl()).isEqualTo(POSTGRES.getJdbcUrl());
+    }
+
+    @Test
+    void kafkaStreamsUsesTheContainerBroker() {
+        KafkaStreamsConfiguration streamsConfig = context.getBean(
+                KafkaStreamsDefaultConfiguration.DEFAULT_STREAMS_CONFIG_BEAN_NAME, KafkaStreamsConfiguration.class);
+        assertThat(streamsConfig.asProperties().getProperty(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG))
+                .isEqualTo(KAFKA.getBootstrapServers());
     }
 
     @Test
