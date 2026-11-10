@@ -11,6 +11,7 @@ import org.apache.kafka.streams.StreamsConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.core.env.Environment;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationContext;
@@ -55,6 +56,9 @@ class VideoStreamApplicationTests {
     @Autowired
     private DataSource dataSource;
 
+    @Autowired
+    private Environment environment;
+
     @Test
     void contextHasSingleApplicationAndCoreBeans() {
         assertThat(context.getBeansWithAnnotation(SpringBootApplication.class)).hasSize(1);
@@ -76,6 +80,13 @@ class VideoStreamApplicationTests {
                 KafkaStreamsDefaultConfiguration.DEFAULT_STREAMS_CONFIG_BEAN_NAME, KafkaStreamsConfiguration.class);
         assertThat(streamsConfig.asProperties().getProperty(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG))
                 .isEqualTo(KAFKA.getBootstrapServers());
+    }
+
+    @Test
+    void kafkaBootstrapServersAreDeclaredInConfiguration() {
+        // The container connection details override this value at runtime; the property must exist so the
+        // application does not rely on an implicit Boot default (override with KAFKA_BOOTSTRAP_SERVERS).
+        assertThat(environment.getProperty("spring.kafka.bootstrap-servers")).isEqualTo("localhost:9092");
     }
 
     @Test
