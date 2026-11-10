@@ -1,6 +1,5 @@
 package com.example.videostream.config;
 
-import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsConfig;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,7 +9,6 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.annotation.EnableKafkaStreams;
 import org.springframework.kafka.annotation.KafkaStreamsDefaultConfiguration;
 import org.springframework.kafka.config.KafkaStreamsConfiguration;
-import org.springframework.kafka.config.TopicBuilder;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -56,38 +54,5 @@ public class KafkaConfig {
         props.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 16);
         
         return new KafkaStreamsConfiguration(props);
-    }
-
-    /**
-     * Create topic for raw video uploads.
-     */
-    @Bean
-    public NewTopic videoUploadTopic() {
-        return TopicBuilder.name("video-uploads")
-                .partitions(10)
-                .replicas(3)
-                .build();
-    }
-
-    /**
-     * Create topic for transcoded video segments.
-     */
-    @Bean
-    public NewTopic transcodedVideoTopic() {
-        return TopicBuilder.name("transcoded-videos")
-                .partitions(20)
-                .replicas(3)
-                .build();
-    }
-
-    /**
-     * Create topic for video metadata updates.
-     */
-    @Bean
-    public NewTopic videoMetadataTopic() {
-        return TopicBuilder.name("video-metadata")
-                .partitions(5)
-                .replicas(3)
-                .build();
     }
 }
