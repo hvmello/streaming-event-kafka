@@ -21,10 +21,20 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 | Segment storage | Generated in code; no object store is involved |
 | Scale and performance | Nothing has been measured |
 
+## Configuration
+
+Settings live in `src/main/resources/application.properties`; these environment variables override the local defaults:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DB_URL` | `jdbc:postgresql://localhost:5432/videostream` | JDBC URL |
+| `DB_USERNAME` | `postgres` | Database user |
+| `DB_PASSWORD` | `postgres` | Database password (local default only; set it in any deployment) |
+| `KAFKA_TOPIC_REPLICAS` | `1` | Replication factor of the pipeline topics; must not exceed the broker count |
+
 ## Known problems
 
 - Video bytes travel through Kafka, which the rebuild replaces with object storage and references
-- The database URL is hardcoded and topics require three brokers
 - There are two application classes, and almost no tests
 
 These are tracked as [issues](https://github.com/hvmello/streaming-event-kafka/issues), grouped by milestone.
