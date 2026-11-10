@@ -61,13 +61,6 @@ public class DatabaseConfig {
         properties.setProperty("hibernate.order_updates", "true");
         properties.setProperty("hibernate.jdbc.batch_versioned_data", "true");
         
-        // Connection pool settings
-        properties.setProperty("hibernate.connection.provider_class", 
-                              "org.hibernate.hikaricp.internal.HikariCPConnectionProvider");
-        properties.setProperty("hibernate.hikari.minimumIdle", "5");
-        properties.setProperty("hibernate.hikari.maximumPoolSize", "20");
-        properties.setProperty("hibernate.hikari.idleTimeout", "30000");
-        
         em.setJpaProperties(properties);
         return em;
     }
