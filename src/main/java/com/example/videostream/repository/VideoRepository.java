@@ -119,6 +119,16 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     int markTranscodeFailed(Long videoId);
 
     /**
+     * Give a transcode back, only if the video is still TRANSCODING: the worker was interrupted (shutdown), the
+     * transcode did not fail, and the redelivered event must be able to claim it again.
+     *
+     * @return the number of rows updated
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.status = 'PROCESSING' WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
+    int markTranscodeInterrupted(Long videoId);
+
+    /**
      * Find videos that need transcoding.
      * 
      * @return A list of videos with PROCESSING status

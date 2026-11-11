@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * {@link FfmpegRunner} that starts the FFmpeg binary with {@link ProcessBuilder} and an argument list, never a
@@ -30,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 public class ProcessFfmpegRunner implements FfmpegRunner {
 
     private static final int OUTPUT_TAIL_LINES = 40;
+    private static final Pattern AUDIO_STREAM = Pattern.compile("Stream #\\d+:\\d+.*: Audio:");
 
     private final String ffmpegPath;
     private final Duration timeout;
@@ -47,8 +49,32 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
         for (Rendition rendition : renditions) {
             Files.createDirectories(outputDir.resolve(rendition.name()));
         }
-        List<String> command = command(input, outputDir, renditions);
+        boolean hasAudio = hasAudio(input);
+        if (!hasAudio) {
+            log.info("{} has no audio stream; transcoding video only", input.getFileName());
+        }
+        List<String> command = command(input, outputDir, renditions, hasAudio);
         log.info("Starting FFmpeg for {} with {} renditions", input.getFileName(), renditions.size());
+        Result result = execute(command);
+        if (result.exit() != 0) {
+            throw new IOException("FFmpeg exited with " + result.exit() + ":\n" + result.output());
+        }
+    }
+
+    /**
+     * Whether the input has an audio stream, read from the stream list FFmpeg prints for an input with no output
+     * (it exits non-zero, which is expected here).
+     */
+    private boolean hasAudio(Path input) throws IOException, InterruptedException {
+        Result probe = execute(List.of(ffmpegPath, "-hide_banner", "-nostdin", "-i", input.toString()));
+        return AUDIO_STREAM.matcher(probe.output()).find();
+    }
+
+    private record Result(int exit, String output) {
+    }
+
+    /** Runs the command to completion, or destroys it after the timeout or on interruption. */
+    private Result execute(List<String> command) throws IOException, InterruptedException {
         Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
 
         // FFmpeg writes progress to stderr; an undrained pipe would block it once the buffer fills.
@@ -68,16 +94,14 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
         if (!finished) {
             throw new IOException("FFmpeg did not finish within " + timeout + " and was destroyed");
         }
-        int exit = process.exitValue();
-        if (exit != 0) {
-            throw new IOException("FFmpeg exited with " + exit + ":\n" + String.join("\n", snapshot(tail)));
-        }
+        return new Result(process.exitValue(), String.join("\n", snapshot(tail)));
     }
 
     /**
-     * The FFmpeg arguments for the given renditions. Visible for tests.
+     * The FFmpeg arguments for the given renditions. Without audio, no audio is mapped or encoded, because
+     * FFmpeg refuses to start when a map matches no stream. Visible for tests.
      */
-    List<String> command(Path input, Path outputDir, List<Rendition> renditions) {
+    List<String> command(Path input, Path outputDir, List<Rendition> renditions, boolean hasAudio) {
         int count = renditions.size();
         List<String> args = new ArrayList<>(List.of(ffmpegPath, "-hide_banner", "-nostdin", "-y",
                 "-i", input.toString()));
@@ -100,11 +124,17 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
             args.addAll(List.of("-map", "[v" + i + "]",
                     "-c:v:" + i, "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                     "-b:v:" + i, r.videoKbps() + "k"));
-            args.addAll(List.of("-map", "a:0", "-c:a:" + i, "aac", "-b:a:" + i, r.audioKbps() + "k"));
+            if (hasAudio) {
+                args.addAll(List.of("-map", "a:0", "-c:a:" + i, "aac", "-b:a:" + i, r.audioKbps() + "k"));
+            }
             if (i > 0) {
                 streamMap.append(' ');
             }
-            streamMap.append("v:").append(i).append(",a:").append(i).append(",name:").append(r.name());
+            streamMap.append("v:").append(i);
+            if (hasAudio) {
+                streamMap.append(",a:").append(i);
+            }
+            streamMap.append(",name:").append(r.name());
         }
 
         args.addAll(List.of(

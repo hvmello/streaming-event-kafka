@@ -12,6 +12,7 @@ import org.springframework.transaction.support.TransactionOperations;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,7 +45,12 @@ public class TranscodeJob {
         /** The attempt failed and the video is {@code ERROR}. */
         FAILED,
         /** The attempt finished but another attempt had already moved the video; its output is unreferenced. */
-        SUPERSEDED
+        SUPERSEDED,
+        /**
+         * The thread was interrupted (shutdown). The video is back to {@code PROCESSING} and the caller must not
+         * acknowledge the record, so it is redelivered and claimed again.
+         */
+        INTERRUPTED
     }
 
     private static final String HLS_PREFIX = "hls/";
@@ -96,9 +102,11 @@ public class TranscodeJob {
             uploadOutput(output, prefix);
             return publish(videoId, prefix + FfmpegRunner.MASTER_PLAYLIST, renditions);
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return fail(videoId, attemptId, e);
+            return interrupted(videoId, attemptId);
         } catch (IOException | RuntimeException e) {
+            if (causedByInterrupt(e)) {
+                return interrupted(videoId, attemptId);
+            }
             return fail(videoId, attemptId, e);
         } finally {
             deleteQuietly(workDir);
@@ -123,6 +131,30 @@ public class TranscodeJob {
         log.warn("Video {} left TRANSCODING while this attempt ran; its output {} stays unreferenced",
                 videoId, manifestKey);
         return Outcome.SUPERSEDED;
+    }
+
+    private static boolean causedByInterrupt(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof InterruptedException || t instanceof InterruptedIOException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Returns the video to PROCESSING. The interrupt flag is cleared meanwhile, so the database calls work. */
+    private Outcome interrupted(Long videoId, String attemptId) {
+        Thread.interrupted();
+        try {
+            log.warn("Transcode attempt {} for video {} was interrupted; returning it to PROCESSING",
+                    attemptId, videoId);
+            transactions.executeWithoutResult(status -> videoRepository.markTranscodeInterrupted(videoId));
+        } catch (RuntimeException e) {
+            log.error("Could not return video {} to PROCESSING", videoId, e);
+        } finally {
+            Thread.currentThread().interrupt();
+        }
+        return Outcome.INTERRUPTED;
     }
 
     private Outcome fail(Long videoId, String attemptId, Exception cause) {

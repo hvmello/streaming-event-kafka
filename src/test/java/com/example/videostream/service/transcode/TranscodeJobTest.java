@@ -50,11 +50,15 @@ class TranscodeJobTest {
     private final List<Path> workDirsSeen = new ArrayList<>();
     private Iterator<String> attempts = List.of("attempt-1", "attempt-2").iterator();
     private IOException runnerFailure;
+    private boolean runnerInterrupted;
 
     /** Writes the files a real run leaves behind, in an order that puts the master first. */
     private final FfmpegRunner runner = (input, outputDir, renditions) -> {
         inputsSeen.add(input);
         workDirsSeen.add(outputDir.getParent());
+        if (runnerInterrupted) {
+            throw new InterruptedException("shutdown");
+        }
         if (runnerFailure != null) {
             throw runnerFailure;
         }
@@ -148,6 +152,22 @@ class TranscodeJobTest {
         verify(videoRepository).markTranscodeFailed(VIDEO_ID);
         verify(videoRepository, never()).markReady(anyLong(), anyString());
         assertThat(store.putOrder).noneMatch(k -> k.endsWith("master.m3u8"));
+    }
+
+    @Test
+    void anInterruptReturnsTheVideoToProcessingInsteadOfFailingIt() {
+        runnerInterrupted = true;
+        when(videoRepository.markTranscoding(VIDEO_ID)).thenReturn(1);
+
+        Outcome outcome = job.run(event());
+        boolean flagRestored = Thread.interrupted();
+
+        assertThat(outcome).isEqualTo(Outcome.INTERRUPTED);
+        assertThat(flagRestored).isTrue();
+        verify(videoRepository).markTranscodeInterrupted(VIDEO_ID);
+        verify(videoRepository, never()).markTranscodeFailed(anyLong());
+        verify(videoRepository, never()).markReady(anyLong(), anyString());
+        assertThat(store.putOrder).isEmpty();
     }
 
     @Test

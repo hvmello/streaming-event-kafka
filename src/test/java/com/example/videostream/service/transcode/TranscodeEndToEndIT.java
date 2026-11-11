@@ -87,6 +87,23 @@ class TranscodeEndToEndIT extends AbstractPipelineIT {
         assertThat(new TreeSet<>(heights)).containsExactly(360, 720);
     }
 
+    @Test
+    void aVideoWithoutAudioReachesReady() throws Exception {
+        requireFfmpeg();
+        Path sample = dir.resolve("silent.mp4");
+        run(List.of("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+                "-t", "12", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+                sample.toString()));
+
+        VideoDTO created = createVideo();
+        upload(created.getId(), Files.readAllBytes(sample));
+        Video ready = awaitStatus(created.getId(), Video.VideoStatus.READY, Duration.ofMinutes(3));
+
+        assertThat(ready.getHlsManifestKey()).endsWith("/master.m3u8");
+        assertThat(qualityLevels(created.getId())).containsExactlyInAnyOrder("720p", "360p");
+    }
+
     private static void requireFfmpeg() {
         boolean present = onPath("ffmpeg") && onPath("ffprobe");
         if ("true".equalsIgnoreCase(System.getenv("REQUIRE_FFMPEG"))) {

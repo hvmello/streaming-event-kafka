@@ -32,7 +32,7 @@ class ProcessFfmpegRunnerTest {
         Path input = dir.resolve("input");
         Path out = dir.resolve("out");
 
-        List<String> command = runner("ffmpeg", Duration.ofMinutes(1)).command(input, out, TWO);
+        List<String> command = runner("ffmpeg", Duration.ofMinutes(1)).command(input, out, TWO, true);
 
         assertThat(command.get(0)).isEqualTo("ffmpeg");
         assertThat(argAfter(command, "-i")).isEqualTo(input.toString());
@@ -55,10 +55,41 @@ class ProcessFfmpegRunnerTest {
     }
 
     @Test
+    void aVideoWithoutAudioMapsNoAudioStream() {
+        List<String> command = runner("ffmpeg", Duration.ofMinutes(1))
+                .command(dir.resolve("input"), dir.resolve("out"), TWO, false);
+
+        assertThat(command).doesNotContain("a:0", "-c:a:0", "-b:a:0", "-c:a:1", "-b:a:1");
+        assertThat(argAfter(command, "-var_stream_map")).isEqualTo("v:0,name:720p v:1,name:360p");
+    }
+
+    @Test
+    void anInputWithAnAudioStreamIsDetectedFromTheProbeOutput() throws IOException, InterruptedException {
+        Path script = scriptPrinting(true);
+
+        runner(script.toString(), Duration.ofSeconds(30)).transcode(dir.resolve("input"), dir.resolve("out"), TWO);
+
+        List<String> calls = Files.readAllLines(dir.resolve("calls.txt"));
+        assertThat(calls).hasSize(2);
+        assertThat(calls.get(1)).contains("-map a:0");
+    }
+
+    @Test
+    void anInputWithoutAnAudioStreamIsTranscodedWithoutAudio() throws IOException, InterruptedException {
+        Path script = scriptPrinting(false);
+
+        runner(script.toString(), Duration.ofSeconds(30)).transcode(dir.resolve("input"), dir.resolve("out"), TWO);
+
+        List<String> calls = Files.readAllLines(dir.resolve("calls.txt"));
+        assertThat(calls).hasSize(2);
+        assertThat(calls.get(1)).doesNotContain("a:0").contains("v:0,name:720p");
+    }
+
+    @Test
     void passesFileNamesAsSingleArgumentsNeverThroughAShell() {
         Path input = dir.resolve("a b; rm -rf x");
 
-        List<String> command = runner("ffmpeg", Duration.ofMinutes(1)).command(input, dir.resolve("out"), TWO);
+        List<String> command = runner("ffmpeg", Duration.ofMinutes(1)).command(input, dir.resolve("out"), TWO, true);
 
         assertThat(command).contains(input.toString());
     }
@@ -101,6 +132,17 @@ class ProcessFfmpegRunnerTest {
         }
         Path script = dir.resolve("fake-ffmpeg.sh");
         Files.writeString(script, "#!/bin/sh\nsleep 60\n");
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    /** A stand-in that prints a stream list and appends its arguments to calls.txt. POSIX only. */
+    private Path scriptPrinting(boolean withAudio) throws IOException {
+        org.junit.jupiter.api.Assumptions.assumeFalse(windows());
+        Path script = dir.resolve("print-ffmpeg.sh");
+        String audio = withAudio ? "echo '  Stream #0:1(und): Audio: aac'\n" : "";
+        Files.writeString(script, "#!/bin/sh\necho \"$@\" >> '" + dir.resolve("calls.txt") + "'\n"
+                + "echo '  Stream #0:0: Video: h264'\n" + audio);
         script.toFile().setExecutable(true);
         return script;
     }

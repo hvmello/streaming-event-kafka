@@ -80,13 +80,17 @@ public class TranscodeWorker {
 
     private void runJob(VideoUploadedEvent event, Acknowledgment ack, MessageListenerContainer container,
                         TopicPartition partition) {
+        boolean acknowledge = true;
         try {
-            job.run(event);
+            // An interrupted job did not finish: leave the record unacknowledged so it is redelivered.
+            acknowledge = job.run(event) != TranscodeJob.Outcome.INTERRUPTED;
         } catch (Throwable t) {
             log.error("Transcode job for video {} threw", event.videoId(), t);
         } finally {
             try {
-                ack.acknowledge();
+                if (acknowledge) {
+                    ack.acknowledge();
+                }
                 container.resumePartition(partition);
             } catch (RuntimeException e) {
                 // The container stopped or the partition was revoked meanwhile; the next owner re-reads it.
