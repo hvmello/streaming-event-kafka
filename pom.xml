@@ -31,6 +31,8 @@
         <spring-cloud.version>2025.0.3</spring-cloud.version>
         <!-- 1.21.4 speaks the Docker API version that Docker Engine 29 still accepts; Boot 3.5.3 manages 1.21.3 -->
         <testcontainers.version>1.21.4</testcontainers.version>
+        <!-- Boot does not manage the AWS SDK; 2.57.12 was the newest release on Maven Central on 2026-11-10 -->
+        <awssdk.version>2.57.12</awssdk.version>
     </properties>
     <dependencies>
         <!-- Core Spring Boot dependencies -->
@@ -75,6 +77,11 @@
         <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-core</artifactId>
+        </dependency>
+        <!-- Object store client (S3 API) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
         </dependency>
 
         <!-- Database dependencies -->
@@ -132,6 +139,13 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${awssdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.cloud</groupId>
                 <artifactId>spring-cloud-dependencies</artifactId>

@@ -9,8 +9,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Repository for Video entity operations.
@@ -67,6 +69,26 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     @Query("UPDATE Video v SET v.viewCount = v.viewCount + 1 WHERE v.id = :videoId")
     int incrementViewCount(Long videoId);
     
+    /**
+     * Of the given object keys, the ones that a video row references. One indexed query per batch.
+     *
+     * @param keys The object keys to look for
+     * @return the subset of {@code keys} that is referenced
+     */
+    @Query("SELECT v.rawObjectKey FROM Video v WHERE v.rawObjectKey IN :keys")
+    Set<String> findReferencedKeys(Collection<String> keys);
+
+    /**
+     * Record a committed upload and move the video to PROCESSING, only if it is still UPLOADING.
+     * The status condition makes the transition atomic, so two concurrent uploads cannot both win.
+     *
+     * @return the number of rows updated: 1 on success, 0 if the video is missing or not UPLOADING
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.rawObjectKey = :key, v.rawSizeBytes = :size, v.status = 'PROCESSING' " +
+           "WHERE v.id = :videoId AND v.status = 'UPLOADING'")
+    int markProcessing(Long videoId, String key, long size);
+
     /**
      * Find videos that need transcoding.
      * 

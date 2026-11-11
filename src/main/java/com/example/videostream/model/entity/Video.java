@@ -18,7 +18,7 @@ import java.util.Set;
  * information about available quality levels and segments.
  */
 @Entity
-@Table(name = "videos")
+@Table(name = "videos", indexes = @Index(name = "idx_videos_raw_object_key", columnList = "rawObjectKey", unique = true))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -63,6 +63,12 @@ public class Video {
 
     @Column(nullable = false)
     private Long viewCount = 0L;
+
+    /** Key of the raw upload in the object store; null until the upload is committed. */
+    @Column(length = 512)
+    private String rawObjectKey;
+
+    private Long rawSizeBytes;
 
     /**
      * Status of a video in the system.

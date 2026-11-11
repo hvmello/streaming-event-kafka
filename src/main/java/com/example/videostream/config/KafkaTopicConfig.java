@@ -13,18 +13,13 @@ import org.springframework.kafka.config.TopicBuilder;
 @EnableConfigurationProperties(KafkaTopicProperties.class)
 public class KafkaTopicConfig {
 
-    @Bean
-    public NewTopic videoUploadTopic(KafkaTopicProperties properties) {
-        return TopicBuilder.name("video-uploads")
-                .partitions(properties.videoUploadsPartitions())
-                .replicas(properties.replicas())
-                .build();
-    }
+    /** Claim-check references to raw uploads; the value never carries video bytes. */
+    public static final String VIDEO_UPLOADED = "video.uploaded";
 
     @Bean
-    public NewTopic transcodedVideoTopic(KafkaTopicProperties properties) {
-        return TopicBuilder.name("transcoded-videos")
-                .partitions(properties.transcodedVideosPartitions())
+    public NewTopic videoUploadedTopic(KafkaTopicProperties properties) {
+        return TopicBuilder.name(VIDEO_UPLOADED)
+                .partitions(properties.videoUploadedPartitions())
                 .replicas(properties.replicas())
                 .build();
     }

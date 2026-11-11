@@ -27,7 +27,7 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Start Postgres and Kafka
+      - name: Start Postgres, Kafka and the object store
         run: docker compose up -d --wait
       - name: Package
         run: ./mvnw -B -DskipTests package
@@ -43,7 +43,7 @@ jobs:
           [ "$code" = "200" ] || { echo "GET /api/videos returned $code"; exit 1; }
           topics=$(docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list)
           echo "$topics"
-          for t in video-uploads transcoded-videos video-metadata; do
+          for t in video.uploaded video-metadata; do
             echo "$topics" | grep -qx "$t" || { echo "missing topic $t"; exit 1; }
           done
       - name: Logs
