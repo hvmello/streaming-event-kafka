@@ -3,6 +3,8 @@ package com.example.videostream.service.storage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +25,9 @@ public class InMemoryObjectStore implements ObjectStore {
     /** Set to make {@link #delete} fail, to test best-effort cleanup. */
     public boolean failOnDelete;
 
+    /** Keys in the order they were put, to assert write ordering. */
+    public final List<String> putOrder = new ArrayList<>();
+
     /** Number of objects per page handed to {@link #forEachPage}. */
     public int pageSize = 1000;
 
@@ -38,6 +43,20 @@ public class InMemoryObjectStore implements ObjectStore {
                 throw new IllegalArgumentException("declared " + size + " bytes but got " + bytes.length);
             }
             entries.put(key, new Entry(bytes, contentType, lastModified));
+            putOrder.add(key);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Override
+    public void get(String key, Path target) {
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            throw new IllegalStateException("no such key " + key);
+        }
+        try {
+            Files.write(target, entry.bytes());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

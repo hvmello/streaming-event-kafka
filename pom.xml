@@ -167,6 +167,14 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!-- Runs the *IT classes (Testcontainers, FFmpeg) in the verify phase; version managed by Boot -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>--enable-preview</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>

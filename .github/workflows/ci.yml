@@ -16,7 +16,13 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - run: ./mvnw -B verify
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Build and test
+        env:
+          # A missing ffmpeg or ffprobe fails the end-to-end transcode test instead of skipping it.
+          REQUIRE_FFMPEG: "true"
+        run: ./mvnw -B verify
 
   compose-boot:
     runs-on: ubuntu-latest

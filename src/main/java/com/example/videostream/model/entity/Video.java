@@ -70,6 +70,10 @@ public class Video {
 
     private Long rawSizeBytes;
 
+    /** Key of the HLS master playlist in the object store; null until the transcode succeeds. */
+    @Column(length = 512)
+    private String hlsManifestKey;
+
     /**
      * Status of a video in the system.
      */
