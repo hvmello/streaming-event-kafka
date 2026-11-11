@@ -1,9 +1,7 @@
 package com.example.videostream.controller;
 
 import com.example.videostream.model.dto.VideoDTO;
-import com.example.videostream.model.stream.StreamingManifest;
 import com.example.videostream.service.catalog.CatalogService;
-import com.example.videostream.service.streaming.adaptive.AdaptiveStreamingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -29,7 +27,6 @@ import java.util.concurrent.CompletableFuture;
 public class VideoController {
 
     private final CatalogService catalogService;
-    private final AdaptiveStreamingService streamingService;
     
     /**
      * Get a paginated list of videos.
@@ -79,23 +76,6 @@ public class VideoController {
     }
     
     /**
-     * Get videos uploaded by a specific user.
-     * 
-     * @param userId The ID of the user
-     * @param page The page number (0-based)
-     * @param size The page size
-     * @return A page of video DTOs uploaded by the user
-     */
-    @GetMapping("/user/{userId}")
-    public ResponseEntity<Page<VideoDTO>> getUserVideos(
-            @PathVariable Long userId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        
-        return ResponseEntity.ok(catalogService.getUserVideos(userId, page, size));
-    }
-    
-    /**
      * Get a video by ID.
      * 
      * @param videoId The ID of the video
@@ -107,33 +87,20 @@ public class VideoController {
     }
     
     /**
-     * Get a streaming manifest for a video.
-     * 
-     * @param videoId The ID of the video
-     * @return The streaming manifest
-     */
-    @GetMapping("/{videoId}/manifest")
-    public ResponseEntity<StreamingManifest> getManifest(@PathVariable Long videoId) {
-        return ResponseEntity.ok(streamingService.generateManifest(videoId));
-    }
-    
-    /**
      * Create a new video entry in the catalog.
      * 
      * @param title The title of the video
      * @param description The description of the video
      * @param durationSeconds The duration of the video in seconds
-     * @param userId The ID of the uploader
      * @return The created video DTO
      */
     @PostMapping
     public ResponseEntity<VideoDTO> createVideo(
             @RequestParam String title,
             @RequestParam String description,
-            @RequestParam Integer durationSeconds,
-            @RequestParam Long userId) {
+            @RequestParam Integer durationSeconds) {
         
-        VideoDTO video = catalogService.createVideo(title, description, durationSeconds, userId);
+        VideoDTO video = catalogService.createVideo(title, description, durationSeconds);
         return ResponseEntity.status(HttpStatus.CREATED).body(video);
     }
     

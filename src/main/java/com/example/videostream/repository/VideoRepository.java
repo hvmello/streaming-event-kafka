@@ -36,15 +36,6 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     Page<Video> findByStatus(Video.VideoStatus status, Pageable pageable);
     
     /**
-     * Find videos uploaded by a specific user.
-     * 
-     * @param userId The ID of the uploader
-     * @param pageable Pagination information
-     * @return A page of videos uploaded by the user
-     */
-    Page<Video> findByUploaderId(Long userId, Pageable pageable);
-    
-    /**
      * Search for videos by title or description.
      * 
      * @param query The search query

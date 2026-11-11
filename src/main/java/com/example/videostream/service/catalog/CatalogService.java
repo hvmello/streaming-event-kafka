@@ -1,9 +1,7 @@
 package com.example.videostream.service.catalog;
 
 import com.example.videostream.model.dto.VideoDTO;
-import com.example.videostream.model.entity.User;
 import com.example.videostream.model.entity.Video;
-import com.example.videostream.repository.UserRepository;
 import com.example.videostream.repository.VideoRepository;
 import com.example.videostream.service.streaming.transcode.TranscodingService;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +34,6 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class CatalogService {
 
     private final VideoRepository videoRepository;
-    private final UserRepository userRepository;
     private final TranscodingService transcodingService;
     
     /**
@@ -84,21 +81,6 @@ public class CatalogService {
     }
     
     /**
-     * Get videos uploaded by a specific user.
-     * 
-     * @param userId The ID of the user
-     * @param page The page number (0-based)
-     * @param size The page size
-     * @return A page of video DTOs uploaded by the user
-     */
-    @Transactional(readOnly = true)
-    public Page<VideoDTO> getUserVideos(Long userId, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by("uploadedAt").descending());
-        return videoRepository.findByUploaderId(userId, pageable)
-                .map(VideoDTO::fromEntity);
-    }
-    
-    /**
      * Get a video by ID.
      * 
      * @param videoId The ID of the video
@@ -118,14 +100,10 @@ public class CatalogService {
      * @param title The title of the video
      * @param description The description of the video
      * @param durationSeconds The duration of the video in seconds
-     * @param userId The ID of the uploader
      * @return The created video DTO
      */
     @Transactional
-    public VideoDTO createVideo(String title, String description, Integer durationSeconds, Long userId) {
-        User uploader = userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "User not found"));
-        
+    public VideoDTO createVideo(String title, String description, Integer durationSeconds) {
         Video video = new Video();
         video.setTitle(title);
         video.setDescription(description);
@@ -133,7 +111,6 @@ public class CatalogService {
         video.setUploadedAt(LocalDateTime.now());
         video.setDurationSeconds(durationSeconds);
         video.setStatus(Video.VideoStatus.UPLOADING);
-        video.setUploader(uploader);
         video.setSegmentDurationMs(6000); // 6 seconds per segment
         video.setSegmentCount(durationSeconds * 1000 / 6000); // Calculate number of segments
         video.setViewCount(0L);

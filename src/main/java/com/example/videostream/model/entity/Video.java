@@ -61,10 +61,6 @@ public class Video {
     @Column(nullable = false)
     private Integer segmentCount;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id")
-    private User uploader;
-
     @Column(nullable = false)
     private Long viewCount = 0L;
 
