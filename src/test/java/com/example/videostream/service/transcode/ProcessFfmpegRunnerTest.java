@@ -153,7 +153,8 @@ class ProcessFfmpegRunnerTest {
         Path script = dir.resolve("print-ffmpeg.sh");
         String audio = withAudio ? "echo '  Stream #0:1(und): Audio: aac'\n" : "";
         Files.writeString(script, "#!/bin/sh\necho \"$@\" >> '" + dir.resolve("calls.txt") + "'\n"
-                + "echo '  Stream #0:0: Video: h264'\n" + audio);
+                + "echo '  Stream #0:0: Video: h264'\n" + audio
+                + "i=0; while [ $i -lt " + trailingLines + " ]; do echo \"    Metadata: line $i\"; i=$((i+1)); done\n");
         script.toFile().setExecutable(true);
         return script;
     }
