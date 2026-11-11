@@ -7,12 +7,13 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * {@link ObjectStore} backed by an S3-compatible service through the AWS SDK v2.
@@ -55,11 +56,15 @@ public class S3ObjectStore implements ObjectStore {
     }
 
     @Override
-    public List<StoredObject> list(String prefix) {
-        List<StoredObject> objects = new ArrayList<>();
+    public void forEachPage(String prefix, Consumer<List<StoredObject>> pageConsumer) {
         ListObjectsV2Request request = ListObjectsV2Request.builder().bucket(bucket).prefix(prefix).build();
-        s3.listObjectsV2Paginator(request).contents()
-                .forEach(o -> objects.add(new StoredObject(o.key(), o.lastModified())));
-        return objects;
+        for (ListObjectsV2Response page : s3.listObjectsV2Paginator(request)) {
+            List<StoredObject> objects = page.contents().stream()
+                    .map(o -> new StoredObject(o.key(), o.lastModified()))
+                    .toList();
+            if (!objects.isEmpty()) {
+                pageConsumer.accept(objects);
+            }
+        }
     }
 }

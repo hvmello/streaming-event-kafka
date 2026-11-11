@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 
 /**
  * In-memory {@link ObjectStore} for unit tests.
@@ -21,6 +22,9 @@ public class InMemoryObjectStore implements ObjectStore {
 
     /** Set to make {@link #delete} fail, to test best-effort cleanup. */
     public boolean failOnDelete;
+
+    /** Number of objects per page handed to {@link #forEachPage}. */
+    public int pageSize = 1000;
 
     @Override
     public void put(String key, InputStream content, long size, String contentType) {
@@ -53,14 +57,20 @@ public class InMemoryObjectStore implements ObjectStore {
     }
 
     @Override
-    public List<StoredObject> list(String prefix) {
-        List<StoredObject> result = new ArrayList<>();
-        entries.forEach((key, entry) -> {
-            if (key.startsWith(prefix)) {
-                result.add(new StoredObject(key, entry.lastModified()));
+    public void forEachPage(String prefix, Consumer<List<StoredObject>> pageConsumer) {
+        List<StoredObject> page = new ArrayList<>();
+        for (Map.Entry<String, Entry> e : new ArrayList<>(entries.entrySet())) {
+            if (e.getKey().startsWith(prefix)) {
+                page.add(new StoredObject(e.getKey(), e.getValue().lastModified()));
+                if (page.size() == pageSize) {
+                    pageConsumer.accept(page);
+                    page = new ArrayList<>();
+                }
             }
-        });
-        return result;
+        }
+        if (!page.isEmpty()) {
+            pageConsumer.accept(page);
+        }
     }
 
     public byte[] bytes(String key) {

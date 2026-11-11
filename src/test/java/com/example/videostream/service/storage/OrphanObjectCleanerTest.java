@@ -11,9 +11,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.io.ByteArrayInputStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class OrphanObjectCleanerTest {
@@ -26,12 +32,15 @@ class OrphanObjectCleanerTest {
     private final InMemoryObjectStore store = new InMemoryObjectStore();
     private OrphanObjectCleaner cleaner;
 
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         StorageProperties properties = new StorageProperties("http://localhost:8333", "us-east-1", "bucket",
                 "a", "s", Duration.ofHours(1), Duration.ofMinutes(10), true);
         cleaner = new OrphanObjectCleaner(store, videoRepository, properties);
-        lenient().when(videoRepository.existsByRawObjectKey("raw/c1/referenced")).thenReturn(true);
+        lenient().when(videoRepository.findReferencedKeys(anyCollection())).thenAnswer(inv ->
+                ((Collection<String>) inv.getArgument(0)).stream()
+                        .filter("raw/c1/referenced"::equals).collect(Collectors.toSet()));
     }
 
     private void put(String key, Instant lastModified) {
@@ -83,5 +92,32 @@ class OrphanObjectCleanerTest {
         assertThat(cleaner.runOnce(NOW)).isZero();
 
         assertThat(store.size()).isEqualTo(2);
+    }
+
+    @Test
+    void resolvesReferencesWithOneQueryPerPageAndSkipsYoungObjects() {
+        store.pageSize = 2;
+        put("raw/c1/a", NOW.minus(Duration.ofHours(2)));
+        put("raw/c1/b", NOW.minus(Duration.ofHours(2)));
+        put("raw/c1/referenced", NOW.minus(Duration.ofHours(2)));
+        put("raw/c1/young", NOW.minus(Duration.ofMinutes(1)));
+        put("raw/c1/z", NOW.minus(Duration.ofHours(2)));
+
+        assertThat(cleaner.runOnce(NOW)).isEqualTo(3);
+
+        // pages: [a, b], [referenced, young], [z]
+        verify(videoRepository, times(3)).findReferencedKeys(anyCollection());
+        assertThat(store.exists("raw/c1/referenced")).isTrue();
+        assertThat(store.exists("raw/c1/young")).isTrue();
+        assertThat(store.size()).isEqualTo(2);
+    }
+
+    @Test
+    void doesNotQueryWhenEveryObjectOnThePageIsYoung() {
+        put("raw/c1/in-flight", NOW.minus(Duration.ofMinutes(5)));
+
+        assertThat(cleaner.runOnce(NOW)).isZero();
+
+        verify(videoRepository, never()).findReferencedKeys(anyCollection());
     }
 }

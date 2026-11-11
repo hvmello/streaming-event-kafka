@@ -3,6 +3,7 @@ package com.example.videostream.service.storage;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Minimal object store used by the upload flow. Production uses {@link S3ObjectStore}; unit tests use an
@@ -29,7 +30,8 @@ public interface ObjectStore {
     boolean exists(String key);
 
     /**
-     * Lists every object whose key starts with {@code prefix}, paging internally.
+     * Walks every object whose key starts with {@code prefix}, one page at a time, so the whole listing is
+     * never held in memory.
      */
-    List<StoredObject> list(String prefix);
+    void forEachPage(String prefix, Consumer<List<StoredObject>> pageConsumer);
 }

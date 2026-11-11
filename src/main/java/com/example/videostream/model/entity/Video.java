@@ -18,7 +18,7 @@ import java.util.Set;
  * information about available quality levels and segments.
  */
 @Entity
-@Table(name = "videos")
+@Table(name = "videos", indexes = @Index(name = "idx_videos_raw_object_key", columnList = "rawObjectKey", unique = true))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
