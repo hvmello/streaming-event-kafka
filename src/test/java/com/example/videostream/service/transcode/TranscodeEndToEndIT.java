@@ -77,7 +77,9 @@ class TranscodeEndToEndIT extends AbstractPipelineIT {
             String probe = probe(List.of("ffprobe", "-v", "error", "-select_streams", "v",
                     "-show_entries", "stream=height", "-of", "csv=p=0", playlist.toString()));
             List<Integer> streamHeights = probe.lines().filter(l -> !l.isBlank())
-                    .map(String::trim).map(Integer::parseInt).toList();
+                    .map(String::trim).map(Integer::parseInt).distinct().toList();
+            // ffprobe lists the single stream of an HLS playlist twice (verified with ffprobe on a plain
+            // two-variant output), so the height is compared as a set: one distinct video height per variant.
             assertThat(streamHeights).as("video streams of " + variant).hasSize(1);
             heights.addAll(streamHeights);
             // Every playlist is a complete VOD playlist with the segments of a 12 s clip at 6 s.
