@@ -1,6 +1,5 @@
 package com.example.videostream;
 
-import com.example.videostream.controller.StreamingController;
 import com.example.videostream.controller.VideoController;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.persistence.EntityManagerFactory;
@@ -17,6 +16,8 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.ApplicationContext;
 import org.springframework.kafka.annotation.KafkaStreamsDefaultConfiguration;
 import org.springframework.kafka.config.KafkaStreamsConfiguration;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -64,8 +65,17 @@ class VideoStreamApplicationTests {
         assertThat(context.getBeansWithAnnotation(SpringBootApplication.class)).hasSize(1);
         assertThat(context.getBean(VideoStreamApplication.class)).isNotNull();
         assertThat(context.getBean(VideoController.class)).isNotNull();
-        assertThat(context.getBean(StreamingController.class)).isNotNull();
         assertThat(context.getBean(EntityManagerFactory.class)).isNotNull();
+    }
+
+    @Test
+    void removedEndpointsAreNotMapped() {
+        RequestMappingHandlerMapping mapping = context.getBean("requestMappingHandlerMapping", RequestMappingHandlerMapping.class);
+        List<String> patterns = mapping.getHandlerMethods().keySet().stream()
+                .flatMap(info -> info.getPatternValues().stream())
+                .toList();
+        assertThat(patterns).isNotEmpty();
+        assertThat(patterns).noneMatch(p -> p.startsWith("/api/streaming") || p.contains("/user/") || p.contains("/manifest"));
     }
 
     @Test

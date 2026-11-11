@@ -32,7 +32,6 @@ public class VideoDTO {
     private Integer segmentDurationMs;
     private Integer segmentCount;
     private Long viewCount;
-    private UserDTO uploader;
     
     /**
      * Convert a Video entity to a VideoDTO.
@@ -53,7 +52,6 @@ public class VideoDTO {
                 .segmentDurationMs(video.getSegmentDurationMs())
                 .segmentCount(video.getSegmentCount())
                 .viewCount(video.getViewCount())
-                .uploader(video.getUploader() != null ? UserDTO.fromEntity(video.getUploader()) : null)
                 .build();
     }
 }

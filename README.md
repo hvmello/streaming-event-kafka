@@ -8,17 +8,15 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 
 ## What is in the code
 
-- Spring Boot 3.5 on Java 21, with JPA entities and repositories for videos, users and viewing sessions
+- Spring Boot 3.5 on Java 21, with a JPA entity and repository for videos
 - A Kafka Streams topology and topic configuration for a transcoding pipeline
-- REST controllers for the catalog and for streaming
-- Segment delivery using `java.util.concurrent.Flow` and virtual threads
+- A REST controller for the video catalog and upload
 
 ## What is simulated
 
 | Part | Reality today |
 |---|---|
 | Transcoding | `TranscodingService` waits 100 ms and returns empty 1 MiB arrays |
-| Segment storage | Generated in code; no object store is involved |
 | Scale and performance | Nothing has been measured |
 
 ## Configuration

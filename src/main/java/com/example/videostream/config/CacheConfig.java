@@ -24,20 +24,16 @@ import java.util.concurrent.TimeUnit;
 public class CacheConfig {
 
     /**
-     * Configure cache manager for video segments.
+     * Configure cache manager for the catalog.
      * 
-     * Creates separate caches for:
-     * - Popular video segments (high hit rate content)
+     * Creates a cache for:
      * - Video metadata (frequently accessed information)
-     * - User session data (for quick authentication)
      */
     @Bean
     public CacheManager cacheManager() {
         SimpleCacheManager cacheManager = new SimpleCacheManager();
         cacheManager.setCaches(Arrays.asList(
-            new ConcurrentMapCache("videoSegments"),
-            new ConcurrentMapCache("videoMetadata"),
-            new ConcurrentMapCache("userSessions")
+            new ConcurrentMapCache("videoMetadata")
         ));
         
         // Start cache maintenance using virtual threads
