@@ -121,3 +121,64 @@ ponta precisa de `ffmpeg` e `ffprobe` no `PATH`.
 - Spring Kafka, pausar e retomar um container: https://docs.spring.io/spring-kafka/reference/kafka/pause-resume.html
 - Apple HLS authoring spec: https://developer.apple.com/documentation/http-live-streaming
 - FFmpeg, formato `hls` e `var_stream_map`: https://ffmpeg.org/ffmpeg-formats.html#hls-2
+
+## Servir HLS e verificar a reprodução (#9)
+
+### O que foi construído
+A aplicação passou a servir o HLS que o worker grava no object store: `GET /api/videos/{id}/hls/{path}` abre o objeto
+em streaming e devolve playlist ou segmento. Uma página `player.html` usa o hls.js, e um teste com Playwright abre o
+Google Chrome de verdade e confirma que o vídeo toca.
+
+### Conceitos
+- **Playlists com URI relativa funcionam atrás de um proxy**: o FFmpeg escreve `720p/index.m3u8` e `seg_000.ts`, sem
+  host. O navegador resolve esses nomes contra a URL do próprio `master.m3u8`, então basta servir a mesma árvore de
+  caminhos. Nenhuma playlist é reescrita.
+- **Só a tentativa que o banco aponta**: o prefixo vem de `hlsManifestKey` (sem `master.m3u8`). Tentativas
+  antigas ou parciais do mesmo `contentId` continuam no bucket, mas nenhum caminho chega até elas.
+- **Lista de permissão em vez de lista de bloqueio**: o caminho precisa casar com segmentos de `[A-Za-z0-9_-]` e um
+  arquivo `.m3u8` ou `.ts`. Como o único ponto permitido é o da extensão, `..`, `%2e%2e` e barra invertida nunca
+  casam, e a validação roda antes de qualquer chamada ao store. O firewall do Spring Security é a segunda barreira,
+  não a única.
+- **Cache por tipo de objeto**: segmentos e playlists de variante vivem sob um prefixo por tentativa que nunca
+  muda, então `immutable` com um ano. O master tem URL estável por vídeo, então `no-cache`.
+- **Streaming sem buffer**: `InputStreamResource` com `Content-Length` explícito copia do S3 para o cliente em blocos
+  e o conversor fecha o stream, inclusive quando o cliente desconecta no meio do segmento.
+- **O Chromium do Playwright não toca H.264/AAC**: o build incluído não tem os codecs proprietários, e o hls.js
+  precisa do MSE com `avc1`/`mp4a`. Por isso o teste usa o canal `chrome` (Google Chrome instalado), e falharia por
+  um motivo alheio a este código com o Chromium padrão.
+
+### Decisões e trade-offs
+- **Proxy em vez de URL pré-assinada**: o player fica na mesma origem (sem CORS no object store) e o CI não depende de
+  o navegador alcançar o host do store. O custo é a banda da aplicação; redirect pré-assinado ou CDN ficam para depois.
+- **hls.js por WebJar**, não por CDN: o CI não depende de um host de terceiros. A versão do pom e a do `player.html`
+  andam juntas, e `HlsPlayerPageTest` falha se uma ficar para trás.
+- **Estado em `window.player`**: o teste lê níveis, erro fatal e `currentTime` em vez de raspar o DOM.
+- **Teste que falha em vez de pular**: sem Chrome o teste pula localmente, mas com `REQUIRE_BROWSER=true` (CI) falha.
+- **Sem range requests, sem autenticação**: o hls.js busca segmentos inteiros, e a segurança continua `permitAll`.
+
+### Como rodar e testar
+```
+docker compose up -d --wait
+./mvnw spring-boot:run
+# http://localhost:8080/player.html?video={id}
+./mvnw -B verify
+```
+O `PlaybackIT` precisa de Docker, `ffmpeg`/`ffprobe` e Google Chrome. No CI, `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
+evita baixar os navegadores do Playwright.
+
+### Armadilhas comuns em produção
+- Esquecer de fechar o `ResponseInputStream` do S3 esgota o pool de conexões HTTP quando clientes desconectam.
+- Validar o caminho depois de decodificar, ou só no firewall, abre brecha para travessia de diretório.
+- `Cache-Control: immutable` em uma URL que muda de conteúdo (como o master, se ele fosse reescrito) deixa
+  o player preso a uma versão velha.
+- Testar reprodução com o Chromium do Playwright dá falso negativo por falta de codec.
+
+### Perguntas para o Heitor
+1. O proxy pela aplicação basta para o estudo, ou vale mover os segmentos para URL pré-assinada/CDN antes de medir?
+2. Playback deve exigir autenticação (URL assinada com expiração) já neste marco, ou só quando houver usuários?
+3. Vale suportar `Range` nos segmentos para clientes que o enviam (Safari nativo, por exemplo)?
+
+### Para ir além
+- hls.js: https://github.com/video-dev/hls.js/
+- Playwright para Java, canais de navegador: https://playwright.dev/java/docs/browsers#google-chrome--microsoft-edge
+- Apple HLS authoring spec: https://developer.apple.com/documentation/http-live-streaming

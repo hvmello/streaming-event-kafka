@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VideoStream player</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 1rem; }
+        video { width: 100%; max-width: 960px; background: #000; }
+        #message { color: #b00020; }
+    </style>
+</head>
+<body>
+<h1>VideoStream</h1>
+<video id="video" muted playsinline controls></video>
+<p id="message"></p>
+<!-- Version must match hlsjs.version in pom.xml -->
+<script src="/webjars/hls.js/1.5.15/dist/hls.min.js"></script>
+<script src="/player.js"></script>
+</body>
+</html>

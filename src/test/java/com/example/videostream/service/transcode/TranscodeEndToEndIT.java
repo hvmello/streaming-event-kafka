@@ -108,7 +108,7 @@ class TranscodeEndToEndIT extends AbstractPipelineIT {
         assertThat(qualityLevels(created.getId())).containsExactlyInAnyOrder("720p", "360p");
     }
 
-    private static void requireFfmpeg() {
+    static void requireFfmpeg() {
         boolean present = onPath("ffmpeg") && onPath("ffprobe");
         if ("true".equalsIgnoreCase(System.getenv("REQUIRE_FFMPEG"))) {
             assertThat(present).as("REQUIRE_FFMPEG=true but ffmpeg or ffprobe is not on the PATH").isTrue();
@@ -130,7 +130,7 @@ class TranscodeEndToEndIT extends AbstractPipelineIT {
         }
     }
 
-    private static void run(List<String> command) throws Exception {
+    static void run(List<String> command) throws Exception {
         probe(command);
     }
 

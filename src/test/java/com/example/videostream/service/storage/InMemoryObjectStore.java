@@ -1,5 +1,6 @@
 package com.example.videostream.service.storage;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -9,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.function.Consumer;
 
@@ -27,6 +29,9 @@ public class InMemoryObjectStore implements ObjectStore {
 
     /** Keys in the order they were put, to assert write ordering. */
     public final List<String> putOrder = new ArrayList<>();
+
+    /** Number of {@link #open} calls, to assert that rejected requests never reach the store. */
+    public int openCalls;
 
     /** Number of objects per page handed to {@link #forEachPage}. */
     public int pageSize = 1000;
@@ -60,6 +65,17 @@ public class InMemoryObjectStore implements ObjectStore {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    @Override
+    public Optional<StoredContent> open(String key) {
+        openCalls++;
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new StoredContent(new ByteArrayInputStream(entry.bytes()), entry.bytes().length,
+                entry.contentType()));
     }
 
     @Override

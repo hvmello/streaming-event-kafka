@@ -11,6 +11,7 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 - Spring Boot 3.5 on Java 21, with a JPA entity and repository for videos
 - Claim-check upload: `POST /api/videos/{id}/upload` streams the file to an S3-compatible object store, records the object key on the video row and publishes a small JSON reference to `video.uploaded`
 - Transcode worker: a consumer of `video.uploaded` downloads the raw object, runs FFmpeg once to produce two HLS renditions (720p and 360p), uploads them under `hls/{contentId}/{attemptId}/` with `master.m3u8` last, and marks the video `READY`. The consumer pauses its partition while a job runs, so a long transcode does not cause a rebalance
+- Playback: `GET /api/videos/{id}/hls/{path}` streams the playlists and segments of a `READY` video from the object store (same origin, no CORS), and `video.playbackUrl` points at the master playlist. A small hls.js player lives at `http://localhost:8080/player.html?video={id}`
 - A scheduled cleaner that deletes raw objects no video row references
 - A Kafka Streams stream on `video-metadata` (to be replaced) and topic configuration
 - A REST controller for the video catalog and upload
@@ -19,7 +20,7 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 
 | Part | Reality today |
 |---|---|
-| Transcoding | Real FFmpeg HLS output at two renditions, run inside the application process. A failed job goes to `ERROR` with no retry (#12), a duplicate or redelivered event is skipped and a worker that dies mid-job leaves the video in `TRANSCODING` (#11). Nothing serves the playlists over HTTP yet (#9) |
+| Transcoding | Real FFmpeg HLS output at two renditions, run inside the application process. A failed job goes to `ERROR` with no retry (#12), a duplicate or redelivered event is skipped and a worker that dies mid-job leaves the video in `TRANSCODING` (#11). The playlists and segments are served through the application (bandwidth is the cost; a presigned redirect or CDN, and range requests, are later) |
 | Commit and publish | The row commit and the Kafka publish are two separate writes. A crash between them leaves a `PROCESSING` row with no event (the transactional outbox, #10, closes this) |
 | Scale and performance | Nothing has been measured |
 
@@ -47,7 +48,7 @@ The cleaner is tuned with `videostream.storage.orphan-grace` (default `PT1H`, ho
 
 ## Run locally
 
-Requires Docker, JDK 21 and FFmpeg (the `ffmpeg` binary on the `PATH`, or set `FFMPEG_PATH`). The end-to-end transcode test also needs `ffprobe`; it is skipped without it, and fails instead when `REQUIRE_FFMPEG=true`, as in CI. Run it with `./mvnw verify`.
+Requires Docker, JDK 21 and FFmpeg (the `ffmpeg` binary on the `PATH`, or set `FFMPEG_PATH`). The end-to-end transcode test also needs `ffprobe`; it is skipped without it, and fails instead when `REQUIRE_FFMPEG=true`, as in CI. The playback test (`PlaybackIT`) also needs Google Chrome installed, because Playwright's bundled Chromium cannot play H.264 or AAC; it is skipped without Chrome, and fails instead when `REQUIRE_BROWSER=true`, as in CI (which sets `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, so no other browser is downloaded). Run it with `./mvnw verify`.
 
 ```
 docker compose up -d --wait
