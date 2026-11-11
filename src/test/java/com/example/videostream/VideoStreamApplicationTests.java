@@ -227,7 +227,10 @@ class VideoStreamApplicationTests {
         assertThat(row.getRawSizeBytes()).isEqualTo(video.length);
         assertThat(row.getStatus()).isEqualTo(Video.VideoStatus.PROCESSING);
 
-        // Exactly one record on video.uploaded names the key.
+        // The relay publishes the outbox row shortly after the commit; exactly one record names the key.
+        await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(500)).untilAsserted(() ->
+                assertThat(readTopic("video.uploaded").stream()
+                        .filter(r -> new String(r.value()).contains(key)).count()).isEqualTo(1));
         List<ConsumerRecord<byte[], byte[]>> uploaded = readTopic("video.uploaded").stream()
                 .filter(r -> new String(r.value()).contains(key))
                 .toList();

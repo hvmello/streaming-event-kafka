@@ -1,7 +1,9 @@
 package com.example.videostream.service.upload;
 
 import com.example.videostream.config.StorageProperties;
+import com.example.videostream.model.entity.OutboxEvent;
 import com.example.videostream.model.entity.Video;
+import com.example.videostream.repository.OutboxEventRepository;
 import com.example.videostream.repository.VideoRepository;
 import com.example.videostream.service.storage.InMemoryObjectStore;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -14,9 +16,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
@@ -24,7 +26,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,6 +33,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,7 +49,7 @@ class VideoUploadServiceTest {
     @Mock
     private VideoRepository videoRepository;
     @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
+    private OutboxEventRepository outboxRepository;
     @Mock
     private PlatformTransactionManager transactionManager;
 
@@ -59,7 +62,7 @@ class VideoUploadServiceTest {
     void setUp() {
         StorageProperties properties = new StorageProperties("http://localhost:8333", "us-east-1", "videos",
                 "a", "s", Duration.ofHours(1), Duration.ofMinutes(10), true);
-        service = new VideoUploadService(videoRepository, store, properties, kafkaTemplate, objectMapper,
+        service = new VideoUploadService(videoRepository, outboxRepository, store, properties, objectMapper,
                 transactionManager);
         video = new Video();
         video.setId(VIDEO_ID);
@@ -76,21 +79,29 @@ class VideoUploadServiceTest {
     }
 
     @Test
-    void writesTheObjectBeforeTheRowUpdateAndPublishesAfterwards() {
+    void writesTheObjectThenTheRowAndTheOutboxRowInOneTransaction() {
         videoExists();
         List<String> order = new ArrayList<>();
+        when(transactionManager.getTransaction(any())).thenAnswer(inv -> {
+            order.add("begin");
+            return mock(TransactionStatus.class);
+        });
+        doAnswer(inv -> {
+            order.add("commit");
+            return null;
+        }).when(transactionManager).commit(any());
         when(videoRepository.markProcessing(eq(VIDEO_ID), anyString(), anyLong())).thenAnswer(inv -> {
             order.add("row update; object present: " + store.exists(inv.getArgument(1)));
             return 1;
         });
-        when(kafkaTemplate.send(anyString(), anyString(), anyString())).thenAnswer(inv -> {
-            order.add("publish");
-            return CompletableFuture.completedFuture(null);
+        when(outboxRepository.save(any(OutboxEvent.class))).thenAnswer(inv -> {
+            order.add("outbox row");
+            return inv.getArgument(0);
         });
 
         String key = service.upload(VIDEO_ID, file());
 
-        assertThat(order).containsExactly("row update; object present: true", "publish");
+        assertThat(order).containsExactly("begin", "row update; object present: true", "outbox row", "commit");
         assertThat(store.bytes(key)).isEqualTo(BYTES);
     }
 
@@ -98,8 +109,6 @@ class VideoUploadServiceTest {
     void keyHasTheRawContentIdAndUploadIdShape() {
         videoExists();
         when(videoRepository.markProcessing(anyLong(), anyString(), anyLong())).thenReturn(1);
-        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
-                .thenReturn(CompletableFuture.completedFuture(null));
 
         String first = service.upload(VIDEO_ID, file());
 
@@ -108,17 +117,20 @@ class VideoUploadServiceTest {
     }
 
     @Test
-    void eventIsASmallJsonReferenceWithoutPayload() throws Exception {
+    void outboxRowIsASmallJsonReferenceWithoutPayload() throws Exception {
         videoExists();
         when(videoRepository.markProcessing(anyLong(), anyString(), anyLong())).thenReturn(1);
-        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
-                .thenReturn(CompletableFuture.completedFuture(null));
 
         String key = service.upload(VIDEO_ID, file());
 
-        ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(eq("video.uploaded"), eq(CONTENT_ID), value.capture());
-        JsonNode event = objectMapper.readTree(value.getValue());
+        ArgumentCaptor<OutboxEvent> saved = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxRepository).save(saved.capture());
+        OutboxEvent row = saved.getValue();
+        assertThat(row.getTopic()).isEqualTo("video.uploaded");
+        assertThat(row.getMessageKey()).isEqualTo(CONTENT_ID);
+        assertThat(row.getSentAt()).isNull();
+        assertThat(row.getAttempts()).isZero();
+        JsonNode event = objectMapper.readTree(row.getPayload());
         assertThat(event.fieldNames()).toIterable()
                 .containsExactlyInAnyOrder("videoId", "contentId", "bucket", "key", "sizeBytes", "contentType",
                         "uploadedAt");
@@ -128,11 +140,11 @@ class VideoUploadServiceTest {
         assertThat(event.get("key").asText()).isEqualTo(key);
         assertThat(event.get("sizeBytes").asLong()).isEqualTo(BYTES.length);
         assertThat(event.get("contentType").asText()).isEqualTo("video/mp4");
-        assertThat(value.getValue().getBytes(StandardCharsets.UTF_8).length).isLessThan(1024);
+        assertThat(row.getPayload().getBytes(StandardCharsets.UTF_8).length).isLessThan(1024);
     }
 
     @Test
-    void rowUpdateFailureDeletesTheObjectAndSendsNoEvent() {
+    void rowUpdateFailureDeletesTheObjectAndQueuesNothing() {
         videoExists();
         when(videoRepository.markProcessing(anyLong(), anyString(), anyLong()))
                 .thenThrow(new IllegalStateException("database down"));
@@ -141,11 +153,25 @@ class VideoUploadServiceTest {
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(store.size()).isZero();
-        verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString());
+        verify(outboxRepository, never()).save(any());
     }
 
     @Test
-    void lostRaceOnTheStatusDeletesTheObjectAndReturns409() {
+    void outboxInsertFailureDeletesTheObjectAndPropagates() {
+        videoExists();
+        when(videoRepository.markProcessing(anyLong(), anyString(), anyLong())).thenReturn(1);
+        when(outboxRepository.save(any(OutboxEvent.class))).thenThrow(new IllegalStateException("insert failed"));
+
+        assertThatThrownBy(() -> service.upload(VIDEO_ID, file()))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(store.size()).isZero();
+        verify(transactionManager).rollback(any());
+        verify(transactionManager, never()).commit(any());
+    }
+
+    @Test
+    void lostRaceOnTheStatusDeletesTheObjectQueuesNothingAndReturns409() {
         videoExists();
         when(videoRepository.markProcessing(anyLong(), anyString(), anyLong())).thenReturn(0);
 
@@ -154,22 +180,7 @@ class VideoUploadServiceTest {
                         e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
 
         assertThat(store.size()).isZero();
-        verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void publishFailureSetsStatusError() {
-        videoExists();
-        when(videoRepository.markProcessing(anyLong(), anyString(), anyLong())).thenReturn(1);
-        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
-                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker down")));
-
-        assertThatThrownBy(() -> service.upload(VIDEO_ID, file()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY));
-
-        assertThat(video.getStatus()).isEqualTo(Video.VideoStatus.ERROR);
-        verify(videoRepository).save(video);
+        verify(outboxRepository, never()).save(any());
     }
 
     @Test
@@ -194,7 +205,7 @@ class VideoUploadServiceTest {
 
         assertThat(store.size()).isZero();
         verify(videoRepository, never()).markProcessing(anyLong(), anyString(), anyLong());
-        verify(kafkaTemplate, never()).send(any(String.class), any(String.class), any(String.class));
+        verify(outboxRepository, never()).save(any());
     }
 
     @Test

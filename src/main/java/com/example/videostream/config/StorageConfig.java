@@ -5,7 +5,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.checksums.RequestChecksumCalculation;
@@ -25,7 +24,6 @@ import java.net.URI;
  */
 @Slf4j
 @Configuration
-@EnableScheduling
 @EnableConfigurationProperties(StorageProperties.class)
 public class StorageConfig {
 

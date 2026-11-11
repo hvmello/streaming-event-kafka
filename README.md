@@ -21,7 +21,7 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 | Part | Reality today |
 |---|---|
 | Transcoding | Real FFmpeg HLS output at two renditions, run inside the application process. A failed job goes to `ERROR` with no retry (#12), a duplicate or redelivered event is skipped and a worker that dies mid-job leaves the video in `TRANSCODING` (#11). The playlists and segments are served through the application (bandwidth is the cost; a presigned redirect or CDN, and range requests, are later) |
-| Commit and publish | The row commit and the Kafka publish are two separate writes. A crash between them leaves a `PROCESSING` row with no event (the transactional outbox, #10, closes this) |
+| Commit and publish | The upload commits the `PROCESSING` row and an outbox row in one transaction, and a relay publishes the outbox to Kafka and only then marks it sent. A crash between publish and mark-sent publishes the event again, so delivery is **at-least-once**: a duplicate `video.uploaded` is possible (the transcode worker skips it, effect-once is #11), a lost event is not. `202` now means "committed and will be published": when Kafka is down the upload still returns `202` (it no longer returns `502`) and the event goes out when the broker is back. One undeliverable row blocks the relay to keep order (poison handling is #12), and sent rows are not deleted yet |
 | Scale and performance | Nothing has been measured |
 
 ## Configuration
