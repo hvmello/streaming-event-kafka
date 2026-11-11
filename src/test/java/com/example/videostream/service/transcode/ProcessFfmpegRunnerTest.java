@@ -65,7 +65,18 @@ class ProcessFfmpegRunnerTest {
 
     @Test
     void anInputWithAnAudioStreamIsDetectedFromTheProbeOutput() throws IOException, InterruptedException {
-        Path script = scriptPrinting(true);
+        Path script = scriptPrinting(true, 0);
+
+        runner(script.toString(), Duration.ofSeconds(30)).transcode(dir.resolve("input"), dir.resolve("out"), TWO);
+
+        List<String> calls = Files.readAllLines(dir.resolve("calls.txt"));
+        assertThat(calls).hasSize(2);
+        assertThat(calls.get(1)).contains("-map a:0");
+    }
+
+    @Test
+    void anAudioStreamFollowedByManyMoreLinesIsStillDetected() throws IOException, InterruptedException {
+        Path script = scriptPrinting(true, 100);
 
         runner(script.toString(), Duration.ofSeconds(30)).transcode(dir.resolve("input"), dir.resolve("out"), TWO);
 
@@ -76,7 +87,7 @@ class ProcessFfmpegRunnerTest {
 
     @Test
     void anInputWithoutAnAudioStreamIsTranscodedWithoutAudio() throws IOException, InterruptedException {
-        Path script = scriptPrinting(false);
+        Path script = scriptPrinting(false, 0);
 
         runner(script.toString(), Duration.ofSeconds(30)).transcode(dir.resolve("input"), dir.resolve("out"), TWO);
 
@@ -136,8 +147,8 @@ class ProcessFfmpegRunnerTest {
         return script;
     }
 
-    /** A stand-in that prints a stream list and appends its arguments to calls.txt. POSIX only. */
-    private Path scriptPrinting(boolean withAudio) throws IOException {
+    /** A stand-in that prints a stream list, then trailing metadata lines, and appends its arguments to calls.txt. POSIX only. */
+    private Path scriptPrinting(boolean withAudio, int trailingLines) throws IOException {
         org.junit.jupiter.api.Assumptions.assumeFalse(windows());
         Path script = dir.resolve("print-ffmpeg.sh");
         String audio = withAudio ? "echo '  Stream #0:1(und): Audio: aac'\n" : "";

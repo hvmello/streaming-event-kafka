@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 /**
@@ -63,14 +64,15 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
 
     /**
      * Whether the input has an audio stream, read from the stream list FFmpeg prints for an input with no output
-     * (it exits non-zero, which is expected here).
+     * (it exits non-zero, which is expected here). The drainer checks every line as it arrives, so the answer does
+     * not depend on how many lines the output tail keeps.
      */
     private boolean hasAudio(Path input) throws IOException, InterruptedException {
         Result probe = execute(List.of(ffmpegPath, "-hide_banner", "-nostdin", "-i", input.toString()));
-        return AUDIO_STREAM.matcher(probe.output()).find();
+        return probe.audioSeen();
     }
 
-    private record Result(int exit, String output) {
+    private record Result(int exit, String output, boolean audioSeen) {
     }
 
     /** Runs the command to completion, or destroys it after the timeout or on interruption. */
@@ -79,7 +81,9 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
 
         // FFmpeg writes progress to stderr; an undrained pipe would block it once the buffer fills.
         Deque<String> tail = new ArrayDeque<>();
-        Thread drainer = Thread.ofPlatform().daemon().name("ffmpeg-output").start(() -> drain(process, tail));
+        AtomicBoolean audioSeen = new AtomicBoolean();
+        Thread drainer = Thread.ofPlatform().daemon().name("ffmpeg-output")
+                .start(() -> drain(process, tail, audioSeen));
         boolean finished = false;
         try {
             finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -94,7 +98,7 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
         if (!finished) {
             throw new IOException("FFmpeg did not finish within " + timeout + " and was destroyed");
         }
-        return new Result(process.exitValue(), String.join("\n", snapshot(tail)));
+        return new Result(process.exitValue(), String.join("\n", snapshot(tail)), audioSeen.get());
     }
 
     /**
@@ -151,12 +155,15 @@ public class ProcessFfmpegRunner implements FfmpegRunner {
         return args;
     }
 
-    private void drain(Process process, Deque<String> tail) {
+    private void drain(Process process, Deque<String> tail, AtomicBoolean audioSeen) {
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 log.debug("ffmpeg: {}", line);
+                if (AUDIO_STREAM.matcher(line).find()) {
+                    audioSeen.set(true);
+                }
                 synchronized (tail) {
                     if (tail.size() == OUTPUT_TAIL_LINES) {
                         tail.removeFirst();
