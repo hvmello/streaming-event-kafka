@@ -24,7 +24,7 @@ class ProcessFfmpegRunnerTest {
     Path dir;
 
     private ProcessFfmpegRunner runner(String binary, Duration timeout) {
-        return new ProcessFfmpegRunner(new TranscodeProperties(true, binary, timeout, 6, 1, Duration.ofMinutes(5), null));
+        return new ProcessFfmpegRunner(new TranscodeProperties(true, binary, timeout, 6, 1, Duration.ofMinutes(5), Duration.ofSeconds(60), null));
     }
 
     @Test

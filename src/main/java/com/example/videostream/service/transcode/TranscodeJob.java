@@ -2,7 +2,10 @@ package com.example.videostream.service.transcode;
 
 import com.example.videostream.config.TranscodeProperties;
 import com.example.videostream.config.TranscodeProperties.Rendition;
+import com.example.videostream.model.entity.TranscodeAttempt;
+import com.example.videostream.model.entity.Video;
 import com.example.videostream.model.event.VideoUploadedEvent;
+import com.example.videostream.repository.TranscodeAttemptRepository;
 import com.example.videostream.repository.VideoRepository;
 import com.example.videostream.service.storage.ObjectStore;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +19,8 @@ import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -27,10 +32,23 @@ import java.util.stream.Stream;
  * One transcode attempt for one {@code video.uploaded} event. It knows nothing about Kafka, so it is tested
  * with an in-memory store and a stub {@link FfmpegRunner}.
  *
- * <p>Every attempt writes under {@code hls/{contentId}/{attemptId}/}, so two attempts at the same video (a
- * redelivery, or a worker that lost its partition) never overwrite each other's files. The master playlist is
- * uploaded last, so a reader that finds it finds everything it references. Only the attempt whose
- * {@code TRANSCODING -> READY} update succeeds is referenced from the database.
+ * <p><b>Effect-once.</b> Kafka delivers at least once, so the same event can arrive again after a rebalance, a
+ * crash or an outbox retry. The dedupe key is the video row, not the message: what must happen once is "this
+ * video becomes {@code READY} with one manifest", and the row is where that is decided.
+ * <ul>
+ *   <li>An attempt first <em>claims</em> the row with a conditional update: from {@code PROCESSING}, or from
+ *       {@code TRANSCODING} when the previous claim's lease has run out (its worker died). The claim stores the
+ *       attempt id, which is a fencing token.</li>
+ *   <li>While FFmpeg runs, a {@link LeaseRenewer} extends the lease, so a live claim is never taken over.</li>
+ *   <li>Every later update ({@code READY}, {@code ERROR}, back to {@code PROCESSING}) also requires that token.
+ *       An attempt that lost its claim (a stalled heartbeat, a zombie after a rebalance) updates no row and ends
+ *       as {@code SUPERSEDED}; whatever it wrote stays unreferenced.</li>
+ *   <li>Every attempt writes under {@code hls/{contentId}/{attemptId}/}, so attempts never overwrite each other,
+ *       and the master playlist goes last, so a reader that finds it finds everything it references.</li>
+ * </ul>
+ * The work itself may run more than once (K3 counts it in {@code transcode_attempts}); its effect, the
+ * {@code READY} transition and the manifest it points at, happens once. A duplicate that finds the video in a
+ * terminal state is {@code STALE}; one that finds a live claim is {@code BUSY}.
  */
 @Slf4j
 @Component
@@ -40,11 +58,17 @@ public class TranscodeJob {
     public enum Outcome {
         /** The video is {@code READY} and points at this attempt's master playlist. */
         READY,
-        /** The video was not {@code PROCESSING}: a duplicate or stale event, nothing was done. */
+        /** The video is already finished (or gone): a duplicate or stale event, nothing was done. */
         STALE,
+        /**
+         * Another attempt holds a claim on the video that is still open, so nothing was done. The caller must not acknowledge
+         * the record and should run the event again later: the claim either finishes (then the retry is
+         * {@code STALE}) or its lease runs out (then the retry takes it over).
+         */
+        BUSY,
         /** The attempt failed and the video is {@code ERROR}. */
         FAILED,
-        /** The attempt finished but another attempt had already moved the video; its output is unreferenced. */
+        /** The attempt lost its claim to another attempt; its output is unreferenced. */
         SUPERSEDED,
         /**
          * The thread was interrupted (shutdown). The video is back to {@code PROCESSING} and the caller must not
@@ -56,42 +80,48 @@ public class TranscodeJob {
     private static final String HLS_PREFIX = "hls/";
 
     private final VideoRepository videoRepository;
+    private final TranscodeAttemptRepository attemptRepository;
     private final ObjectStore objectStore;
     private final FfmpegRunner ffmpegRunner;
     private final TranscodeProperties properties;
     private final TransactionOperations transactions;
+    private final Clock clock;
+    private final LeaseRenewer leaseRenewer;
     private final Supplier<String> attemptIds;
 
     @Autowired
-    public TranscodeJob(VideoRepository videoRepository, ObjectStore objectStore, FfmpegRunner ffmpegRunner,
-                        TranscodeProperties properties, TransactionOperations transactions) {
-        this(videoRepository, objectStore, ffmpegRunner, properties, transactions,
-                () -> UUID.randomUUID().toString());
+    public TranscodeJob(VideoRepository videoRepository, TranscodeAttemptRepository attemptRepository,
+                        ObjectStore objectStore, FfmpegRunner ffmpegRunner, TranscodeProperties properties,
+                        TransactionOperations transactions, Clock clock, LeaseRenewer leaseRenewer) {
+        this(videoRepository, attemptRepository, objectStore, ffmpegRunner, properties, transactions, clock,
+                leaseRenewer, () -> UUID.randomUUID().toString());
     }
 
-    TranscodeJob(VideoRepository videoRepository, ObjectStore objectStore, FfmpegRunner ffmpegRunner,
-                 TranscodeProperties properties, TransactionOperations transactions,
+    TranscodeJob(VideoRepository videoRepository, TranscodeAttemptRepository attemptRepository,
+                 ObjectStore objectStore, FfmpegRunner ffmpegRunner, TranscodeProperties properties,
+                 TransactionOperations transactions, Clock clock, LeaseRenewer leaseRenewer,
                  Supplier<String> attemptIds) {
         this.videoRepository = videoRepository;
+        this.attemptRepository = attemptRepository;
         this.objectStore = objectStore;
         this.ffmpegRunner = ffmpegRunner;
         this.properties = properties;
         this.transactions = transactions;
+        this.clock = clock;
+        this.leaseRenewer = leaseRenewer;
         this.attemptIds = attemptIds;
     }
 
     public Outcome run(VideoUploadedEvent event) {
         Long videoId = event.videoId();
-        Integer claimed = transactions.execute(status -> videoRepository.markTranscoding(videoId));
-        if (claimed == null || claimed == 0) {
-            log.info("Skipping video {}: it is not PROCESSING (duplicate or stale event)", videoId);
-            return Outcome.STALE;
+        String attemptId = attemptIds.get();
+        if (!claim(videoId, attemptId)) {
+            return unclaimed(videoId);
         }
 
-        String attemptId = attemptIds.get();
         String prefix = HLS_PREFIX + event.contentId() + "/" + attemptId + "/";
         Path workDir = null;
-        try {
+        try (LeaseRenewer.Lease lease = leaseRenewer.start(videoId, attemptId)) {
             workDir = Files.createTempDirectory("transcode-" + videoId + "-");
             Path input = workDir.resolve("input");
             Path output = Files.createDirectory(workDir.resolve("out"));
@@ -100,7 +130,7 @@ public class TranscodeJob {
             List<Rendition> renditions = properties.renditions();
             ffmpegRunner.transcode(input, output, renditions);
             uploadOutput(output, prefix);
-            return publish(videoId, prefix + FfmpegRunner.MASTER_PLAYLIST, renditions);
+            return publish(videoId, attemptId, prefix + FfmpegRunner.MASTER_PLAYLIST, renditions);
         } catch (InterruptedException e) {
             return interrupted(videoId, attemptId);
         } catch (IOException | RuntimeException e) {
@@ -113,24 +143,64 @@ public class TranscodeJob {
         }
     }
 
-    private Outcome publish(Long videoId, String manifestKey, List<Rendition> renditions) {
+    /** Takes the claim and logs the attempt, in one transaction. */
+    private boolean claim(Long videoId, String attemptId) {
+        Instant now = clock.instant();
+        Boolean claimed = transactions.execute(status -> {
+            if (videoRepository.claim(videoId, attemptId, now.plus(properties.lease()), now) == 0) {
+                return false;
+            }
+            boolean reclaimed = attemptRepository.existsByVideoId(videoId);
+            attemptRepository.save(new TranscodeAttempt(videoId, attemptId, now, reclaimed));
+            log.info("Claimed video {} as attempt {} (reclaimed={})", videoId, attemptId, reclaimed);
+            return true;
+        });
+        return Boolean.TRUE.equals(claimed);
+    }
+
+    /**
+     * The claim was refused. A video that is still unfinished ({@code TRANSCODING}, or {@code PROCESSING} after a
+     * race with a release) means BUSY: the claim was alive when the update ran, and may have expired since, so the
+     * lease is deliberately not re-read here; the retry decides. Anything else means the event has nothing left
+     * to do.
+     */
+    private Outcome unclaimed(Long videoId) {
+        Boolean busy = transactions.execute(status -> videoRepository.findById(videoId)
+                .map(video -> video.getStatus() == Video.VideoStatus.TRANSCODING
+                        || video.getStatus() == Video.VideoStatus.PROCESSING)
+                .orElse(false));
+        if (Boolean.TRUE.equals(busy)) {
+            log.info("Video {} is held by a transcode claim that is still open; the event will be retried", videoId);
+            return Outcome.BUSY;
+        }
+        log.info("Skipping video {}: it is not claimable (duplicate or stale event)", videoId);
+        return Outcome.STALE;
+    }
+
+    private Outcome publish(Long videoId, String attemptId, String manifestKey, List<Rendition> renditions) {
         Boolean won = transactions.execute(status -> {
-            if (videoRepository.markReady(videoId, manifestKey) == 0) {
+            if (videoRepository.markReady(videoId, attemptId, manifestKey) == 0) {
+                closeAttempt(attemptId, Outcome.SUPERSEDED);
                 return false;
             }
             videoRepository.findById(videoId).ifPresent(video -> {
                 video.setAvailableQualityLevels(new HashSet<>(renditions.stream().map(Rendition::name).toList()));
                 videoRepository.save(video);
             });
+            closeAttempt(attemptId, Outcome.READY);
             return true;
         });
         if (Boolean.TRUE.equals(won)) {
             log.info("Video {} is READY: {}", videoId, manifestKey);
             return Outcome.READY;
         }
-        log.warn("Video {} left TRANSCODING while this attempt ran; its output {} stays unreferenced",
-                videoId, manifestKey);
+        log.warn("Attempt {} no longer holds the claim on video {}; its output {} stays unreferenced",
+                attemptId, videoId, manifestKey);
         return Outcome.SUPERSEDED;
+    }
+
+    private void closeAttempt(String attemptId, Outcome outcome) {
+        attemptRepository.close(attemptId, clock.instant(), outcome.name());
     }
 
     private static boolean causedByInterrupt(Throwable e) {
@@ -148,7 +218,10 @@ public class TranscodeJob {
         try {
             log.warn("Transcode attempt {} for video {} was interrupted; returning it to PROCESSING",
                     attemptId, videoId);
-            transactions.executeWithoutResult(status -> videoRepository.markTranscodeInterrupted(videoId));
+            transactions.executeWithoutResult(status -> {
+                videoRepository.markTranscodeInterrupted(videoId, attemptId);
+                closeAttempt(attemptId, Outcome.INTERRUPTED);
+            });
         } catch (RuntimeException e) {
             log.error("Could not return video {} to PROCESSING", videoId, e);
         } finally {
@@ -157,14 +230,20 @@ public class TranscodeJob {
         return Outcome.INTERRUPTED;
     }
 
+    /** Fails the video, unless this attempt no longer holds the claim: then another attempt owns the outcome. */
     private Outcome fail(Long videoId, String attemptId, Exception cause) {
         log.error("Transcode attempt {} for video {} failed", attemptId, videoId, cause);
         try {
-            transactions.executeWithoutResult(status -> videoRepository.markTranscodeFailed(videoId));
+            Boolean failed = transactions.execute(status -> {
+                boolean held = videoRepository.markTranscodeFailed(videoId, attemptId) > 0;
+                closeAttempt(attemptId, held ? Outcome.FAILED : Outcome.SUPERSEDED);
+                return held;
+            });
+            return Boolean.FALSE.equals(failed) ? Outcome.SUPERSEDED : Outcome.FAILED;
         } catch (RuntimeException e) {
             log.error("Could not mark video {} as ERROR", videoId, e);
+            return Outcome.FAILED;
         }
-        return Outcome.FAILED;
     }
 
     /**

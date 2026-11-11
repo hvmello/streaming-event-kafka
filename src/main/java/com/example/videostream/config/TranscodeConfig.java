@@ -5,6 +5,7 @@ import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
@@ -12,6 +13,7 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 
+import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -26,6 +28,13 @@ public class TranscodeConfig {
     public static final String LISTENER_ID = "videostream-transcoder";
     public static final String GROUP_ID = "videostream-transcoder";
     public static final String CONTAINER_FACTORY = "transcodeListenerContainerFactory";
+
+    /** The time source of the transcode lease; a bean so that tests can control it. */
+    @Bean
+    @ConditionalOnMissingBean
+    public Clock clock() {
+        return Clock.systemUTC();
+    }
 
     /**
      * Starts from the auto-configured consumer settings, so the broker address (including a test container's)
