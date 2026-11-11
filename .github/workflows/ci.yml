@@ -22,6 +22,10 @@ jobs:
         env:
           # A missing ffmpeg or ffprobe fails the end-to-end transcode test instead of skipping it.
           REQUIRE_FFMPEG: "true"
+          # A missing Google Chrome fails the playback test instead of skipping it. The runner already has
+          # Chrome, so Playwright must not download its own browsers (the bundled Chromium has no H.264 anyway).
+          REQUIRE_BROWSER: "true"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: ./mvnw -B verify
 
   compose-boot:

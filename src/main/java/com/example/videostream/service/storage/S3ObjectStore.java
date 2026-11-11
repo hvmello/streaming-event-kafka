@@ -3,10 +3,12 @@ package com.example.videostream.service.storage;
 import com.example.videostream.config.StorageProperties;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
@@ -16,6 +18,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -46,6 +49,18 @@ public class S3ObjectStore implements ObjectStore {
     @Override
     public void get(String key, Path target) {
         s3.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(), ResponseTransformer.toFile(target));
+    }
+
+    @Override
+    public Optional<StoredContent> open(String key) {
+        try {
+            ResponseInputStream<GetObjectResponse> stream = s3.getObject(
+                    GetObjectRequest.builder().bucket(bucket).key(key).build(), ResponseTransformer.toInputStream());
+            GetObjectResponse response = stream.response();
+            return Optional.of(new StoredContent(stream, response.contentLength(), response.contentType()));
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        }
     }
 
     @Override

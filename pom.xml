@@ -33,6 +33,11 @@
         <testcontainers.version>1.21.4</testcontainers.version>
         <!-- Boot does not manage the AWS SDK; 2.57.12 was the newest release on Maven Central on 2026-11-10 -->
         <awssdk.version>2.57.12</awssdk.version>
+        <!-- hls.js WebJar: 1.5.15 (2024-10-08) was the newest release on Maven Central on 2026-11-10.
+             Keep the version in src/main/resources/static/player.html in step; HlsPlayerPageTest checks it. -->
+        <hlsjs.version>1.5.15</hlsjs.version>
+        <!-- Playwright for Java: 1.64.0 (2026-10-21) was the newest release on Maven Central on 2026-11-10 -->
+        <playwright.version>1.64.0</playwright.version>
     </properties>
     <dependencies>
         <!-- Core Spring Boot dependencies -->
@@ -82,6 +87,12 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
+        </dependency>
+        <!-- Player script served from the classpath under /webjars, so CI does not depend on a CDN -->
+        <dependency>
+            <groupId>org.webjars.npm</groupId>
+            <artifactId>hls.js</artifactId>
+            <version>${hlsjs.version}</version>
         </dependency>
 
         <!-- Database dependencies -->
@@ -133,6 +144,13 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Drives Google Chrome for the playback test -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>${playwright.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

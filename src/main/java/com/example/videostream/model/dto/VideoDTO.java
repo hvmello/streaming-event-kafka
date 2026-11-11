@@ -32,6 +32,9 @@ public class VideoDTO {
     private Integer segmentDurationMs;
     private Integer segmentCount;
     private Long viewCount;
+
+    /** Path of the HLS master playlist; {@code null} until the video is {@code READY}. */
+    private String playbackUrl;
     
     /**
      * Convert a Video entity to a VideoDTO.
@@ -52,6 +55,8 @@ public class VideoDTO {
                 .segmentDurationMs(video.getSegmentDurationMs())
                 .segmentCount(video.getSegmentCount())
                 .viewCount(video.getViewCount())
+                .playbackUrl(video.getStatus() == Video.VideoStatus.READY
+                        ? "/api/videos/" + video.getId() + "/hls/master.m3u8" : null)
                 .build();
     }
 }
