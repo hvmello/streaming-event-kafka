@@ -57,3 +57,67 @@ Os testes de integração sobem Postgres, Kafka e SeaweedFS com Testcontainers, 
 - Padrão claim check: https://www.enterpriseintegrationpatterns.com/patterns/messaging/StoreInLibrary.html
 - AWS SDK for Java v2, mudança de checksums padrão: https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/
 - SeaweedFS S3 API: https://github.com/seaweedfs/seaweedfs/wiki/Amazon-S3-API
+
+## Transcodificação com FFmpeg e partição pausada (#8)
+
+### O que foi construído
+Um consumidor de `video.uploaded` baixa o objeto bruto, roda o FFmpeg uma vez para gerar duas renditions HLS (720p e
+360p), envia tudo para o object store e marca o vídeo como `READY`. O trabalho pesado roda numa thread separada,
+enquanto a partição do Kafka fica pausada.
+
+### Conceitos
+- **Pausar a partição em vez de aumentar `max.poll.interval.ms`**: o broker tira o consumidor do grupo se ele não
+  chamar `poll()` dentro desse intervalo, e isso dispara um rebalance. Aumentar o limite só empurra o problema para
+  um job ainda mais longo. Pausar a partição e devolver a thread do listener mantém o `poll()` rodando (sem buscar
+  nada daquela partição), então o consumidor continua no grupo por mais demorado que seja o job.
+- **Ack fora da thread do consumidor**: `AckMode.MANUAL` com `asyncAcks` deixa a thread do worker chamar
+  `acknowledge()` e a thread do consumidor fazer o commit no próximo `poll()`. O ack vem antes do
+  `resumePartition`, para que o offset já esteja na fila de commit quando a partição volta a ser lida.
+- **Saída com escopo de tentativa**: cada execução grava em `hls/{contentId}/{attemptId}/`. Duas tentativas para o
+  mesmo vídeo (reentrega, ou um worker que perdeu a partição) nunca sobrescrevem os arquivos uma da outra. Só a
+  tentativa cuja transição `TRANSCODING -> READY` vence é referenciada pelo banco.
+- **Manifesto por último**: segmentos, depois playlists de variante, depois `master.m3u8`. Quem encontra o master
+  encontra tudo o que ele cita.
+- **Transição condicional**: `UPDATE ... WHERE status = 'PROCESSING'` devolve 0 linhas quando o evento é duplicado
+  ou velho, e o job simplesmente ignora.
+- **Um processo, duas renditions**: `-filter_complex split=2` decodifica a entrada uma vez; `-var_stream_map` com
+  `name:` dá nome aos diretórios das variantes. O worker envia o que estiver no diretório de saída, em vez de
+  prever nomes de arquivo, porque a nomenclatura muda entre versões do FFmpeg.
+
+### Decisões e trade-offs
+- **FFmpeg atrás de uma interface** (`FfmpegRunner`): os testes unitários usam um stub que escreve arquivos falsos e
+  nunca precisam do binário. O teste de ponta a ponta usa o FFmpeg de verdade e o `ffprobe`.
+- **`ProcessBuilder` com lista de argumentos**: nunca uma string de shell, então nome de arquivo não injeta comando.
+  O stderr é drenado numa thread; sem isso o FFmpeg trava quando o buffer do pipe enche.
+- **Sem retry**: um job que falha vai para `ERROR`. Retries e DLT são o #12; deduplicação e limpeza de tentativas
+  abandonadas são o #11. Um worker que morre no meio deixa o vídeo em `TRANSCODING`.
+- **Dentro da aplicação**: o worker roda no mesmo processo da API por enquanto. Separar em outro processo fica para
+  depois.
+- **Teste que falha em vez de pular**: o teste do FFmpeg pula localmente sem o binário, mas com `REQUIRE_FFMPEG=true`
+  (CI) falha, para que um binário ausente não passe em silêncio.
+
+### Como rodar e testar
+```
+docker compose up -d --wait
+./mvnw -B verify
+```
+Os testes `*IT` rodam no `verify` (failsafe) e sobem Postgres, Kafka e SeaweedFS com Testcontainers. O de ponta a
+ponta precisa de `ffmpeg` e `ffprobe` no `PATH`.
+
+### Armadilhas comuns em produção
+- Qualquer trabalho bloqueante que sobre na thread do listener traz o rebalance de volta.
+- Esquecer de drenar o stderr do processo trava o FFmpeg.
+- Matar só o processo pai deixa filhos vivos (por exemplo um script wrapper) segurando o pipe aberto.
+- Disco: o arquivo bruto (até 512 MB) é copiado para um diretório temporário; o tamanho do executor limita quantos
+  jobs rodam ao mesmo tempo.
+
+### Perguntas para o Heitor
+1. As duas renditions (720p e 360p) e os bitrates fixos servem, ou vale uma escada derivada da resolução da entrada?
+2. Um vídeo preso em `TRANSCODING` depois de uma queda do worker deve ser recuperado por um job de varredura (#11) ou
+   pelo retry (#12)?
+3. O worker deve virar um processo separado antes do #9, ou só quando a CPU da API for um problema medido?
+
+### Para ir além
+- Spring Kafka, pausar e retomar um container: https://docs.spring.io/spring-kafka/reference/kafka/pause-resume.html
+- Apple HLS authoring spec: https://developer.apple.com/documentation/http-live-streaming
+- FFmpeg, formato `hls` e `var_stream_map`: https://ffmpeg.org/ffmpeg-formats.html#hls-2

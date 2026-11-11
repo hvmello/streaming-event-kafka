@@ -1,6 +1,7 @@
 package com.example.videostream.service.storage;
 
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.function.Consumer;
@@ -21,6 +22,11 @@ public interface ObjectStore {
      * Streams {@code size} bytes from {@code content} to {@code key}, replacing any existing object.
      */
     void put(String key, InputStream content, long size, String contentType);
+
+    /**
+     * Downloads the object to {@code target}, which must not exist yet. The bytes go to disk, never into the heap.
+     */
+    void get(String key, Path target);
 
     /**
      * Deletes the object; deleting a missing key is not an error.

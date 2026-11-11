@@ -108,6 +108,9 @@ class VideoStreamApplicationTests {
         registry.add("videostream.storage.secret-key", () -> "test-secret-key");
         // Orphans are deleted regardless of age, so the cleanup test does not depend on the clock.
         registry.add("videostream.storage.orphan-grace", () -> "PT0S");
+        // These tests inspect rows right after the upload; the transcode worker would move them. It is covered
+        // by TranscodeEndToEndIT and LongJobNoRebalanceIT.
+        registry.add("videostream.transcode.enabled", () -> "false");
     }
 
     @Autowired

@@ -10,6 +10,7 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 
 - Spring Boot 3.5 on Java 21, with a JPA entity and repository for videos
 - Claim-check upload: `POST /api/videos/{id}/upload` streams the file to an S3-compatible object store, records the object key on the video row and publishes a small JSON reference to `video.uploaded`
+- Transcode worker: a consumer of `video.uploaded` downloads the raw object, runs FFmpeg once to produce two HLS renditions (720p and 360p), uploads them under `hls/{contentId}/{attemptId}/` with `master.m3u8` last, and marks the video `READY`. The consumer pauses its partition while a job runs, so a long transcode does not cause a rebalance
 - A scheduled cleaner that deletes raw objects no video row references
 - A Kafka Streams stream on `video-metadata` (to be replaced) and topic configuration
 - A REST controller for the video catalog and upload
@@ -18,7 +19,7 @@ A study project exploring Kafka Streams, virtual threads and the Java Flow API a
 
 | Part | Reality today |
 |---|---|
-| Transcoding | Not implemented. Video bytes stay out of Kafka: only references travel on `video.uploaded` and nothing consumes them yet |
+| Transcoding | Real FFmpeg HLS output at two renditions, run inside the application process. A failed job goes to `ERROR` with no retry (#12), a duplicate or redelivered event is skipped and a worker that dies mid-job leaves the video in `TRANSCODING` (#11). Nothing serves the playlists over HTTP yet (#9) |
 | Commit and publish | The row commit and the Kafka publish are two separate writes. A crash between them leaves a `PROCESSING` row with no event (the transactional outbox, #10, closes this) |
 | Scale and performance | Nothing has been measured |
 
@@ -40,11 +41,13 @@ Settings live in `src/main/resources/application.properties`; these environment 
 | `S3_SECRET_KEY` | `local-secret-key` | Object store secret key (local default only; set it in any deployment) |
 | `UPLOAD_MAX_SIZE` | `512MB` | Maximum upload size (file and request) |
 
+Transcoding is tuned with `videostream.transcode.*` (`timeout`, `concurrency`, `max-poll-interval`, `segment-seconds` and the `renditions` list).
+
 The cleaner is tuned with `videostream.storage.orphan-grace` (default `PT1H`, how old an unreferenced object must be before it is deleted; keep it far above the longest request) and `videostream.storage.cleanup-interval` (default `PT10M`).
 
 ## Run locally
 
-Requires Docker and JDK 21.
+Requires Docker, JDK 21 and FFmpeg (the `ffmpeg` binary on the `PATH`, or set `FFMPEG_PATH`). The end-to-end transcode test also needs `ffprobe`; it is skipped without it, and fails instead when `REQUIRE_FFMPEG=true`, as in CI. Run it with `./mvnw verify`.
 
 ```
 docker compose up -d --wait
@@ -56,7 +59,8 @@ docker compose down
 
 ## Known problems
 
-- Nothing consumes `video.uploaded` yet, and the `video-metadata` stream is a placeholder
+- The `video-metadata` stream is a placeholder with fake quality levels, and nothing publishes to it
+- Transcoding runs inside the application, so FFmpeg competes with the API for CPU; raw files up to 512 MB are copied to a temp directory
 - There are almost no tests
 
 These are tracked as [issues](https://github.com/hvmello/streaming-event-kafka/issues), grouped by milestone.

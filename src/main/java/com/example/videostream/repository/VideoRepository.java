@@ -90,6 +90,45 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     int markProcessing(Long videoId, String key, long size);
 
     /**
+     * Claim a video for transcoding, only if it is still PROCESSING. Zero rows means the event is stale or a
+     * duplicate.
+     *
+     * @return the number of rows updated
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.status = 'TRANSCODING' WHERE v.id = :videoId AND v.status = 'PROCESSING'")
+    int markTranscoding(Long videoId);
+
+    /**
+     * Publish the result of a transcode, only if the video is still TRANSCODING.
+     *
+     * @return the number of rows updated
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.status = 'READY', v.hlsManifestKey = :manifestKey " +
+           "WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
+    int markReady(Long videoId, String manifestKey);
+
+    /**
+     * Fail a transcode, only if the video is still TRANSCODING.
+     *
+     * @return the number of rows updated
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.status = 'ERROR' WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
+    int markTranscodeFailed(Long videoId);
+
+    /**
+     * Give a transcode back, only if the video is still TRANSCODING: the worker was interrupted (shutdown), the
+     * transcode did not fail, and the redelivered event must be able to claim it again.
+     *
+     * @return the number of rows updated
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.status = 'PROCESSING' WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
+    int markTranscodeInterrupted(Long videoId);
+
+    /**
      * Find videos that need transcoding.
      * 
      * @return A list of videos with PROCESSING status
