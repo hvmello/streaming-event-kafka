@@ -14,6 +14,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
 
 import java.io.IOException;
@@ -39,6 +40,7 @@ import static org.awaitility.Awaitility.await;
         "videostream.transcode.max-poll-interval=PT5S"
 })
 @Import(LongJobNoRebalanceIT.SlowRunnerConfig.class)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class LongJobNoRebalanceIT extends AbstractPipelineIT {
 
     private static final Duration JOB_DURATION = Duration.ofSeconds(15);

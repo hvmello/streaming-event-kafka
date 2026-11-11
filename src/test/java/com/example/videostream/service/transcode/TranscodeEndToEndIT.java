@@ -5,6 +5,7 @@ import com.example.videostream.model.entity.Video;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@code REQUIRE_FFMPEG=true}, as in CI, a missing binary fails the test instead, so it cannot pass silently.
  */
 @TestPropertySource(properties = "videostream.transcode.enabled=true")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class TranscodeEndToEndIT extends AbstractPipelineIT {
 
     @Autowired
