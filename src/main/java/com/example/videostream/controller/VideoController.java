@@ -104,11 +104,12 @@ public class VideoController {
     }
     
     /**
-     * Upload the raw video to the object store and publish a reference to Kafka.
-     * 
+     * Upload the raw video to the object store and record a reference to it in the transactional outbox, which
+     * the relay publishes to Kafka afterwards. This endpoint does not talk to Kafka.
+     *
      * @param videoId The ID of the video
      * @param file The video file
-     * @return 202 with the key of the raw object
+     * @return 202 with the key of the raw object: committed, and the event will be published
      */
     @PostMapping("/{videoId}/upload")
     public ResponseEntity<UploadAcceptedDTO> uploadVideoContent(

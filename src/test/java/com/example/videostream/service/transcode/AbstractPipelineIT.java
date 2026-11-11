@@ -37,17 +37,17 @@ import static org.awaitility.Awaitility.await;
  * without the contexts pointing at stopped containers. Docker is required; the tests fail loudly without it.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-abstract class AbstractPipelineIT {
+public abstract class AbstractPipelineIT {
 
     @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES =
+    protected static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine")).withDatabaseName("videostream");
 
     @ServiceConnection
-    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka:3.8.0"));
+    protected static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka:3.8.0"));
 
     // Same image tag as compose.yaml. SeaweedFS reads these credentials only because no s3.json is mounted.
-    static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>("chrislusf/seaweedfs:4.53")
+    protected static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>("chrislusf/seaweedfs:4.53")
             .withCommand("server", "-s3", "-dir=/data", "-volume.max=0", "-master.volumeSizeLimitMB=64")
             .withEnv("AWS_ACCESS_KEY_ID", "test-access-key")
             .withEnv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
@@ -70,21 +70,21 @@ abstract class AbstractPipelineIT {
     }
 
     @Autowired
-    TestRestTemplate http;
+    protected TestRestTemplate http;
 
     @Autowired
-    VideoRepository videoRepository;
+    protected VideoRepository videoRepository;
 
     @Autowired
-    TransactionOperations transactions;
+    protected TransactionOperations transactions;
 
     /** The collection is lazy, so it is read inside a transaction. */
-    Set<String> qualityLevels(Long videoId) {
+    protected Set<String> qualityLevels(Long videoId) {
         return transactions.execute(status ->
                 new HashSet<>(videoRepository.findById(videoId).orElseThrow().getAvailableQualityLevels()));
     }
 
-    VideoDTO createVideo() {
+    protected VideoDTO createVideo() {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("title", "clip");
         form.add("description", "test clip");
@@ -97,7 +97,7 @@ abstract class AbstractPipelineIT {
         return response.getBody();
     }
 
-    void upload(Long videoId, byte[] bytes) {
+    protected void upload(Long videoId, byte[] bytes) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(bytes) {
             @Override
@@ -112,7 +112,7 @@ abstract class AbstractPipelineIT {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
     }
 
-    Video awaitStatus(Long videoId, Video.VideoStatus status, Duration timeout) {
+    protected Video awaitStatus(Long videoId, Video.VideoStatus status, Duration timeout) {
         await().atMost(timeout).pollInterval(Duration.ofMillis(500)).untilAsserted(() ->
                 assertThat(videoRepository.findById(videoId).orElseThrow().getStatus()).isEqualTo(status));
         return videoRepository.findById(videoId).orElseThrow();

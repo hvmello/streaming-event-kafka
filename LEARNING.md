@@ -182,3 +182,61 @@ evita baixar os navegadores do Playwright.
 - hls.js: https://github.com/video-dev/hls.js/
 - Playwright para Java, canais de navegador: https://playwright.dev/java/docs/browsers#google-chrome--microsoft-edge
 - Apple HLS authoring spec: https://developer.apple.com/documentation/http-live-streaming
+
+## Transactional outbox (#10)
+
+### O que foi construído
+O upload deixou de falar com o Kafka. Na mesma transação que move o vídeo para `PROCESSING`, ele insere uma linha em
+`outbox_events` com o JSON de `video.uploaded`. Um `OutboxRelay` agendado lê as linhas não enviadas, publica no Kafka e
+só então marca `sent_at`. Um teste de integração derruba o relay entre a publicação e a marcação e confirma que o
+evento não se perde.
+
+### Conceitos
+- **Dual write**: gravar no banco e publicar no Kafka são duas escritas sem transação em comum. Qualquer ordem deixa
+  uma janela em que uma foi feita e a outra não. O outbox troca as duas escritas por uma só (duas linhas, um commit) e
+  empurra a publicação para um processo que pode tentar de novo.
+- **Publicar antes de marcar como enviado**: o `sent_at` só fica visível no commit da passada, depois dos acks do
+  broker. Se o processo morre no meio, o commit não acontece, a linha continua sem `sent_at` e a próxima passada
+  publica de novo. Marcar antes de publicar perderia o evento.
+- **At-least-once, não exactly-once**: a janela entre o ack e o commit gera duplicata, nunca perda. O consumidor já
+  ignora a duplicata (`markTranscoding ... WHERE status = 'PROCESSING'`); efeito único de verdade é o #11.
+- **`FOR UPDATE SKIP LOCKED`**: duas instâncias (ou duas passadas sobrepostas) não publicam a mesma linha ao mesmo
+  tempo; a segunda pula o que a primeira travou em vez de esperar.
+- **Parar na primeira falha**: se a linha 2 falha e a 3 é publicada, a ordem por chave no tópico não segue mais a ordem
+  de commit. O relay para a passada na primeira falha e tenta de novo na próxima.
+- **`acks=all` e idempotência**: a garantia do relay depende de o ack significar "replicado". São os padrões do
+  Kafka 3.x, mas ficam declarados em `application.properties`.
+
+### Decisões e trade-offs
+- **A falha de envio faz commit, não rollback**: `attempts` e `last_error` precisam ser gravados, e uma segunda
+  transação (`REQUIRES_NEW`) esperaria para sempre pelo lock que a primeira ainda segura. Então a falha é tratada
+  dentro da passada e o commit leva junto as linhas já enviadas. Só uma exceção inesperada (o "crash") faz rollback.
+- **A transação fica aberta durante os envios**: com broker lento, uma passada segura locks e uma conexão por até
+  `batch-size x send-timeout`. O lote pequeno e o timeout limitam isso. A alternativa (reservar linhas com uma coluna
+  de lease, publicar fora da transação e marcar depois) tem mais peças e ficou de fora.
+- **Mudança de API**: sem Kafka o upload agora devolve `202`, não `502`; o evento sai quando o broker voltar.
+- **Linhas enviadas não são apagadas** (fora do escopo); o índice `(sent_at, id)` mantém a consulta barata.
+- **Um evento venenoso trava o relay** para preservar a ordem. Tratamento disso é o #12.
+
+### Como rodar e testar
+```
+docker compose up -d --wait
+./mvnw -B verify
+```
+`OutboxRelayCrashIT` precisa de Docker e roda o relay à mão (`runOnce()`), com o agendador desligado.
+
+### Armadilhas comuns em produção
+- Marcar como enviado antes do ack, ou em transação separada que commita antes da publicação, perde eventos.
+- Sem `SKIP LOCKED`, duas instâncias publicam tudo em dobro; com `NOWAIT`, uma delas falha a cada passada.
+- Apagar linhas enviadas sem política deixa a tabela crescer sem limite; o índice parcial ajuda, mas não basta.
+- Esquecer que o consumidor precisa tolerar duplicatas: o outbox garante entrega, não efeito único.
+
+### Perguntas para o Heitor
+1. A parada na primeira falha basta para um tópico só, ou vale já separar a ordem por chave?
+2. Quando entrarem outros eventos, o relay continua único ou vira um por tópico?
+3. Qual retenção para as linhas enviadas (dias, ou arquivar)?
+
+### Para ir além
+- Chris Richardson, Transactional outbox: https://microservices.io/patterns/data/transactional-outbox.html
+- PostgreSQL, bloqueio de linhas e `SKIP LOCKED`: https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE
+- Kafka, garantias do produtor idempotente: https://kafka.apache.org/documentation/#producerconfigs_enable.idempotence
