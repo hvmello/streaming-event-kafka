@@ -3,7 +3,6 @@ package com.example.videostream.service.catalog;
 import com.example.videostream.model.dto.VideoDTO;
 import com.example.videostream.model.entity.Video;
 import com.example.videostream.repository.VideoRepository;
-import com.example.videostream.service.streaming.transcode.TranscodingService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -21,12 +20,9 @@ class CatalogServiceTest {
     @Mock
     private VideoRepository videoRepository;
 
-    @Mock
-    private TranscodingService transcodingService;
-
     @Test
     void createVideoSavesUploadingVideoWithContentIdAndSegmentCount() {
-        CatalogService service = new CatalogService(videoRepository, transcodingService);
+        CatalogService service = new CatalogService(videoRepository);
         when(videoRepository.save(any(Video.class))).thenAnswer(inv -> inv.getArgument(0));
 
         VideoDTO dto = service.createVideo("Title", "Description", 60);

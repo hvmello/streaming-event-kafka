@@ -68,6 +68,25 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     int incrementViewCount(Long videoId);
     
     /**
+     * Whether any video references the raw object key.
+     *
+     * @param rawObjectKey The object key to look for
+     * @return true if a row references the key
+     */
+    boolean existsByRawObjectKey(String rawObjectKey);
+
+    /**
+     * Record a committed upload and move the video to PROCESSING, only if it is still UPLOADING.
+     * The status condition makes the transition atomic, so two concurrent uploads cannot both win.
+     *
+     * @return the number of rows updated: 1 on success, 0 if the video is missing or not UPLOADING
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.rawObjectKey = :key, v.rawSizeBytes = :size, v.status = 'PROCESSING' " +
+           "WHERE v.id = :videoId AND v.status = 'UPLOADING'")
+    int markProcessing(Long videoId, String key, long size);
+
+    /**
      * Find videos that need transcoding.
      * 
      * @return A list of videos with PROCESSING status

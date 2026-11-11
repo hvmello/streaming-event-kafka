@@ -9,7 +9,6 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 @ConfigurationProperties("videostream.kafka.topics")
 public record KafkaTopicProperties(
         @DefaultValue("1") short replicas,
-        @DefaultValue("10") int videoUploadsPartitions,
-        @DefaultValue("20") int transcodedVideosPartitions,
+        @DefaultValue("10") int videoUploadedPartitions,
         @DefaultValue("5") int videoMetadataPartitions) {
 }

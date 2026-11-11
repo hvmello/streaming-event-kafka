@@ -1,18 +1,16 @@
 package com.example.videostream.controller;
 
+import com.example.videostream.model.dto.UploadAcceptedDTO;
 import com.example.videostream.model.dto.VideoDTO;
 import com.example.videostream.service.catalog.CatalogService;
+import com.example.videostream.service.upload.VideoUploadService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Controller for video catalog operations.
@@ -27,6 +25,7 @@ import java.util.concurrent.CompletableFuture;
 public class VideoController {
 
     private final CatalogService catalogService;
+    private final VideoUploadService videoUploadService;
     
     /**
      * Get a paginated list of videos.
@@ -105,25 +104,20 @@ public class VideoController {
     }
     
     /**
-     * Upload video content and start the transcoding process.
+     * Upload the raw video to the object store and publish a reference to Kafka.
      * 
      * @param videoId The ID of the video
      * @param file The video file
-     * @return A response indicating that the upload was accepted
-     * @throws IOException if an I/O error occurs
+     * @return 202 with the key of the raw object
      */
     @PostMapping("/{videoId}/upload")
-    public ResponseEntity<String> uploadVideoContent(
+    public ResponseEntity<UploadAcceptedDTO> uploadVideoContent(
             @PathVariable Long videoId,
-            @RequestParam("file") MultipartFile file) throws IOException {
+            @RequestParam("file") MultipartFile file) {
         
         log.info("Received video upload for video {}, size: {} bytes", videoId, file.getSize());
-        
-        // Start the upload and transcoding process asynchronously
-        CompletableFuture<Void> future = catalogService.uploadVideoContent(videoId, file.getBytes());
-        
-        // Return immediately without waiting for the upload to complete
-        return ResponseEntity.accepted().body("Video upload accepted for processing");
+        String objectKey = videoUploadService.upload(videoId, file);
+        return ResponseEntity.accepted().body(new UploadAcceptedDTO(objectKey));
     }
     
     /**

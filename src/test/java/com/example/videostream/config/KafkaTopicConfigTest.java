@@ -14,13 +14,21 @@ class KafkaTopicConfigTest {
     @Test
     void defaultsToOneReplicaAndKeepsPartitionCounts() {
         runner.run(ctx -> {
-            assertThat(ctx.getBeansOfType(NewTopic.class)).hasSize(3);
-            assertThat(ctx.getBean("videoUploadTopic", NewTopic.class).numPartitions()).isEqualTo(10);
-            assertThat(ctx.getBean("transcodedVideoTopic", NewTopic.class).numPartitions()).isEqualTo(20);
+            assertThat(ctx.getBeansOfType(NewTopic.class)).hasSize(2);
+            NewTopic uploaded = ctx.getBean("videoUploadedTopic", NewTopic.class);
+            assertThat(uploaded.name()).isEqualTo("video.uploaded");
+            assertThat(uploaded.numPartitions()).isEqualTo(10);
             assertThat(ctx.getBean("videoMetadataTopic", NewTopic.class).numPartitions()).isEqualTo(5);
             ctx.getBeansOfType(NewTopic.class).values()
                     .forEach(t -> assertThat(t.replicationFactor()).isEqualTo((short) 1));
         });
+    }
+
+    @Test
+    void byteTopicsAreGone() {
+        runner.run(ctx -> assertThat(ctx.getBeansOfType(NewTopic.class).values())
+                .extracting(NewTopic::name)
+                .containsExactlyInAnyOrder("video.uploaded", "video-metadata"));
     }
 
     @Test

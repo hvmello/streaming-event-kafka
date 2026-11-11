@@ -64,6 +64,12 @@ public class Video {
     @Column(nullable = false)
     private Long viewCount = 0L;
 
+    /** Key of the raw upload in the object store; null until the upload is committed. */
+    @Column(length = 512)
+    private String rawObjectKey;
+
+    private Long rawSizeBytes;
+
     /**
      * Status of a video in the system.
      */

@@ -3,7 +3,6 @@ package com.example.videostream.service.catalog;
 import com.example.videostream.model.dto.VideoDTO;
 import com.example.videostream.model.entity.Video;
 import com.example.videostream.repository.VideoRepository;
-import com.example.videostream.service.streaming.transcode.TranscodingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
@@ -17,7 +16,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
@@ -25,8 +23,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
  * Service for managing the video catalog.
  * 
  * This service provides methods for creating, retrieving, updating, and
- * deleting videos in the catalog. It also handles video uploads and
- * initiates the transcoding process.
+ * deleting videos in the catalog. Uploads are handled by VideoUploadService.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,7 +31,6 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class CatalogService {
 
     private final VideoRepository videoRepository;
-    private final TranscodingService transcodingService;
     
     /**
      * Get a paginated list of videos.
@@ -119,24 +115,6 @@ public class CatalogService {
         log.info("Created new video: {}", savedVideo.getId());
         
         return VideoDTO.fromEntity(savedVideo);
-    }
-    
-    /**
-     * Upload video content and start the transcoding process.
-     * 
-     * @param videoId The ID of the video
-     * @param content The video content
-     * @return A CompletableFuture that completes when the upload is processed
-     */
-    @Transactional
-    public CompletableFuture<Void> uploadVideoContent(Long videoId, byte[] content) {
-        Video video = videoRepository.findById(videoId)
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Video not found"));
-        
-        log.info("Uploading content for video: {}, size: {} bytes", videoId, content.length);
-        
-        // Submit the video for transcoding
-        return transcodingService.submitForTranscoding(video.getContentId(), content);
     }
     
     /**
