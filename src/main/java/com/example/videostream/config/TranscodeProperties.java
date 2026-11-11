@@ -16,6 +16,9 @@ import java.util.List;
  * @param concurrency     listener threads and maximum concurrent FFmpeg jobs
  * @param maxPollInterval consumer {@code max.poll.interval.ms}; the paused partition keeps polling, so a job may
  *                        run far longer than this
+ * @param lease           how long a transcode claim lives without a heartbeat; the running job renews it every
+ *                        third of this, and a claim past it is treated as dead and may be taken over. It must stay
+ *                        much larger than the clock skew between workers
  * @param renditions      the HLS renditions to produce, highest first
  */
 @ConfigurationProperties("videostream.transcode")
@@ -26,6 +29,7 @@ public record TranscodeProperties(
         @DefaultValue("6") int segmentSeconds,
         @DefaultValue("1") int concurrency,
         @DefaultValue("PT5M") Duration maxPollInterval,
+        @DefaultValue("PT60S") Duration lease,
         List<Rendition> renditions) {
 
     /**
@@ -48,6 +52,9 @@ public record TranscodeProperties(
         renditions = List.copyOf(renditions);
         if (segmentSeconds < 1 || concurrency < 1) {
             throw new IllegalArgumentException("segment-seconds and concurrency must be at least 1");
+        }
+        if (lease == null || lease.isZero() || lease.isNegative()) {
+            throw new IllegalArgumentException("lease must be a positive duration");
         }
     }
 }

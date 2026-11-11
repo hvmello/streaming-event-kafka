@@ -240,3 +240,61 @@ docker compose up -d --wait
 - Chris Richardson, Transactional outbox: https://microservices.io/patterns/data/transactional-outbox.html
 - PostgreSQL, bloqueio de linhas e `SKIP LOCKED`: https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE
 - Kafka, garantias do produtor idempotente: https://kafka.apache.org/documentation/#producerconfigs_enable.idempotence
+
+## Consumidor com efeito único (#11)
+
+### O que foi construído
+O worker de transcode agora aguenta entrega repetida. O vídeo é reivindicado com um update condicional que grava o id
+da tentativa na linha (um fencing token) e um prazo (lease) que o job renova enquanto o FFmpeg roda. Todo update
+terminal (`READY`, `ERROR`, volta para `PROCESSING`) exige esse id. Uma tabela `transcode_attempts` registra cada
+reivindicação, e é dela que sai o K3 (quantas vezes um vídeo foi transcodificado além da primeira).
+
+### Conceitos
+- **Efeito único vs. execução única**: o trabalho pode rodar mais de uma vez (K3 conta isso); o que acontece uma vez
+  só é o efeito, a transição para `READY` com um manifesto. A garantia vem do banco, não do Kafka.
+- **Chave de deduplicação**: é o vídeo, não a mensagem. Duas mensagens diferentes sobre o mesmo vídeo precisam dar um
+  só efeito, e a mesma mensagem entregue duas vezes também.
+- **Fencing token**: o id da tentativa grava quem é o dono da reivindicação. Um zumbi (processo que perdeu a partição
+  mas continua rodando) tenta publicar com o id velho e o update não acha linha: ele é cercado, e a saída dele fica
+  sem referência.
+- **Lease vs. commit de offset**: o offset diz "o Kafka não precisa entregar de novo"; o lease diz "alguém está
+  trabalhando nisso agora". Sem lease, um worker morto no meio deixa o vídeo em `TRANSCODING` para sempre, porque a
+  reentrega acha o vídeo "em andamento" e o descarta.
+- **`BUSY`**: se a reentrega chega e o dono ainda está vivo (ou o lease ainda não venceu), ela não pode ser confirmada
+  nem descartada. Fica sem ack, com a partição pausada, e tenta de novo em `lease / 3`.
+
+### Decisões e trade-offs
+- **Relógio da aplicação, não do banco**: o lease compara `Instant` de hosts diferentes. O lease (60 s) precisa ficar
+  muito acima do desvio de relógio. Usar o relógio do banco evitaria isso, mas exigiria SQL nativo.
+- **Heartbeat parado por mais que o lease** (pausa longa de GC, por exemplo) deixa uma segunda tentativa começar com a
+  primeira viva. A corretude se mantém pelo fencing (um só `READY`), mas o K3 conta uma reexecução a mais. É o número
+  honesto.
+- **O tempo de espera do `BUSY`** é `lease / 3`, não o tempo restante exato do lease: é mais simples e, se o zumbi
+  terminar antes, a reentrega percebe mais cedo.
+- **Saída de tentativas cercadas fica no bucket**: o `OrphanObjectCleaner` só cobre uploads brutos. Limpeza fica para
+  depois.
+- **Colunas novas anuláveis**: com `ddl-auto=update`, coluna `NOT NULL` em tabela existente quebra a subida.
+
+### Como rodar e testar
+```
+docker compose up -d --wait
+./mvnw -B verify
+```
+`RedeliveryEffectOnceIT` usa um runner falso e `lease=PT3S`. Um teste publica o mesmo evento mais duas vezes depois do
+`READY`; o outro para o heartbeat de uma tentativa, reinicia o consumidor sem confirmar o registro e confere que a
+reentrega espera o lease, assume, chega a `READY` uma vez e que a primeira tentativa, ao acordar, termina `SUPERSEDED`.
+
+### Armadilhas comuns em produção
+- Deduplicar pelo offset ou pelo id da mensagem: reprocessamento e mensagens diferentes sobre a mesma entidade passam.
+- Lease sem renovação: qualquer job mais longo que o lease vira reexecução.
+- Update terminal sem o fencing token: o zumbi sobrescreve o resultado de quem assumiu.
+- Confiar no relógio de vários hosts sem margem folgada no lease.
+
+### Perguntas para o Heitor
+1. Vale medir o desvio de relógio real entre os hosts antes de fixar o lease em 60 s?
+2. A limpeza dos prefixos HLS de tentativas cercadas entra no `OrphanObjectCleaner` ou num job próprio?
+3. O K3 deve virar métrica do Micrometer no #14, ou a consulta ao banco basta?
+
+### Para ir além
+- Martin Kleppmann, "How to do distributed locking" (fencing tokens): https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
+- Kafka, semântica de entrega: https://kafka.apache.org/documentation/#semantics

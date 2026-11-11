@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Objects;
@@ -73,6 +74,16 @@ public class Video {
     /** Key of the HLS master playlist in the object store; null until the transcode succeeds. */
     @Column(length = 512)
     private String hlsManifestKey;
+
+    /**
+     * Fencing token: the attempt that holds the transcode claim. Null until a transcode starts (and while the
+     * video waits to be claimed again). Nullable so that rows written before this column existed still load.
+     */
+    @Column(length = 36)
+    private String transcodeAttemptId;
+
+    /** When the claim expires unless its holder renews it; a {@code TRANSCODING} row past it is a dead claim. */
+    private Instant transcodeLeaseUntil;
 
     /**
      * Status of a video in the system.

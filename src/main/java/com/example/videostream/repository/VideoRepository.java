@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -90,43 +91,59 @@ public interface VideoRepository extends JpaRepository<Video, Long> {
     int markProcessing(Long videoId, String key, long size);
 
     /**
-     * Claim a video for transcoding, only if it is still PROCESSING. Zero rows means the event is stale or a
-     * duplicate.
+     * Claim a video for transcoding: take it from PROCESSING, or take over a dead claim (TRANSCODING whose lease
+     * has run out, or that has no lease at all). The attempt id becomes the fencing token that every later update
+     * must present. Zero rows means the event is stale, or another attempt holds a live claim.
      *
      * @return the number of rows updated
      */
     @Modifying
-    @Query("UPDATE Video v SET v.status = 'TRANSCODING' WHERE v.id = :videoId AND v.status = 'PROCESSING'")
-    int markTranscoding(Long videoId);
+    @Query("UPDATE Video v SET v.status = 'TRANSCODING', v.transcodeAttemptId = :attemptId, " +
+           "v.transcodeLeaseUntil = :leaseUntil WHERE v.id = :videoId AND (v.status = 'PROCESSING' OR " +
+           "(v.status = 'TRANSCODING' AND (v.transcodeLeaseUntil IS NULL OR v.transcodeLeaseUntil < :now)))")
+    int claim(Long videoId, String attemptId, Instant leaseUntil, Instant now);
 
     /**
-     * Publish the result of a transcode, only if the video is still TRANSCODING.
+     * Extend a claim, only if this attempt still holds it.
      *
-     * @return the number of rows updated
+     * @return the number of rows updated: 0 means the claim was lost
      */
     @Modifying
-    @Query("UPDATE Video v SET v.status = 'READY', v.hlsManifestKey = :manifestKey " +
-           "WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
-    int markReady(Long videoId, String manifestKey);
+    @Query("UPDATE Video v SET v.transcodeLeaseUntil = :leaseUntil " +
+           "WHERE v.id = :videoId AND v.status = 'TRANSCODING' AND v.transcodeAttemptId = :attemptId")
+    int renewLease(Long videoId, String attemptId, Instant leaseUntil);
 
     /**
-     * Fail a transcode, only if the video is still TRANSCODING.
+     * Publish the result of a transcode, only if this attempt still holds the claim.
      *
      * @return the number of rows updated
      */
     @Modifying
-    @Query("UPDATE Video v SET v.status = 'ERROR' WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
-    int markTranscodeFailed(Long videoId);
+    @Query("UPDATE Video v SET v.status = 'READY', v.hlsManifestKey = :manifestKey, v.transcodeLeaseUntil = NULL " +
+           "WHERE v.id = :videoId AND v.status = 'TRANSCODING' AND v.transcodeAttemptId = :attemptId")
+    int markReady(Long videoId, String attemptId, String manifestKey);
 
     /**
-     * Give a transcode back, only if the video is still TRANSCODING: the worker was interrupted (shutdown), the
-     * transcode did not fail, and the redelivered event must be able to claim it again.
+     * Fail a transcode, only if this attempt still holds the claim.
      *
      * @return the number of rows updated
      */
     @Modifying
-    @Query("UPDATE Video v SET v.status = 'PROCESSING' WHERE v.id = :videoId AND v.status = 'TRANSCODING'")
-    int markTranscodeInterrupted(Long videoId);
+    @Query("UPDATE Video v SET v.status = 'ERROR', v.transcodeLeaseUntil = NULL " +
+           "WHERE v.id = :videoId AND v.status = 'TRANSCODING' AND v.transcodeAttemptId = :attemptId")
+    int markTranscodeFailed(Long videoId, String attemptId);
+
+    /**
+     * Give a transcode back, only if this attempt still holds the claim: the worker was interrupted (shutdown),
+     * the transcode did not fail, and the redelivered event must be able to claim it again. The attempt id and
+     * the lease are cleared.
+     *
+     * @return the number of rows updated
+     */
+    @Modifying
+    @Query("UPDATE Video v SET v.status = 'PROCESSING', v.transcodeAttemptId = NULL, v.transcodeLeaseUntil = NULL " +
+           "WHERE v.id = :videoId AND v.status = 'TRANSCODING' AND v.transcodeAttemptId = :attemptId")
+    int markTranscodeInterrupted(Long videoId, String attemptId);
 
     /**
      * Find videos that need transcoding.
